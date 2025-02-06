@@ -1,0 +1,86 @@
+# CS 631 - Advanced Programming in the Unix Environment
+# clang-format source code format file
+# Author: Anthony Webster
+#
+# I created this file based on the criteria specified at <https://stevens.netmeister.org/631/style>.
+# I don't really care what you do with this file. I've just written this to (hopefully) be helpful.
+# But, because it's "the right thing to do", this file is licensed under the MIT license.
+#
+# Copyright (c) 2024 Anthony Webster
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+BasedOnStyle: LLVM
+# Despite my strong disagreement with using 80 columns, the style guide says we
+# should try to keep code within 80 columns. So I guess we have to set this to 80.
+ColumnLimit: 80
+TabWidth: 4
+IndentWidth: 4
+UseTab: AlignWithSpaces
+# LineEnding: LF
+# InsertBraces: true
+IndentCaseBlocks: false
+BreakBeforeBraces: Linux
+MaxEmptyLinesToKeep: 2
+IncludeBlocks: Regroup
+SortIncludes: CaseInsensitive
+IncludeCategories:
+  # Kernel includes first
+  - Regex: '^<sys/'
+    Priority: 1
+    SortPriority: 1
+    CaseSensitive: false
+  # Network includes after kernel includes, without a blank line
+  - Regex: '^<(net|netinet|protocols)/'
+    Priority: 1
+    SortPriority: 2
+    CaseSensitive: false
+  # vmlinux.h
+  - Regex: '^"vmlinux.h'
+    Priority: 1
+    SortPriority: 1
+    CaseSensitive: false
+  # /usr includes next, separated by a blank line
+  - Regex: '^<'
+    Priority: 2
+    SortPriority: 3
+    CaseSensitive: false
+  # And other includes after /usr, separated by a blank line
+  - Regex: '^"'
+    Priority: 3
+    SortPriority: 4
+    CaseSensitive: false
+
+# These aren't explicitly stated in the style guide but are derived from how the style guide is formatted.
+BitFieldColonSpacing: None
+SpaceAfterLogicalNot: false
+SpaceBeforeAssignmentOperators: true
+QualifierAlignment: Left
+PointerAlignment: Right
+AllowShortFunctionsOnASingleLine: None
+AlwaysBreakAfterDefinitionReturnType: All
+SeparateDefinitionBlocks: Always
+SpaceAfterCStyleCast: false
+AllowShortIfStatementsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+ContinuationIndentWidth: 4
+
