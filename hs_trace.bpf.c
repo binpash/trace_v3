@@ -88,7 +88,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 struct scratch_data {
 	struct file_access_t access;
 	struct unique_file_t file;
-	struct task_struct *task;
+	// struct task_struct *task;
 };
 
 struct {
@@ -104,9 +104,13 @@ int
 BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long syscall_id)
 {
 	int z = 0;
-	struct file_access_t *access = &((struct scratch_data *)bpf_map_lookup_percpu_elem(&scratch, &z, BPF_ANY))->access;
-	struct unique_file_t *file = &((struct scratch_data *)bpf_map_lookup_percpu_elem(&scratch, &z, BPF_ANY))->file;
-	struct task_struct **task = &((struct scratch_data *)bpf_map_lookup_percpu_elem(&scratch, &z, BPF_ANY))->task;
+	struct scratch_data *scratch_ptr = bpf_map_lookup_percpu_elem(&scratch, &z, BPF_ANY);
+	if (scratch_ptr == NULL) {
+		return -1;
+	}
+	struct file_access_t *access = &scratch_ptr->access;
+	struct unique_file_t *file = &scratch_ptr->file;
+	// struct task_struct **task = &scratch_ptr->task;
 
 	access->pid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
 	if (bpf_map_lookup_elem(&pids, &access->pid) == NULL) {
@@ -129,10 +133,19 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long syscall_id)
 		return -1;
 	}
 
-	*task = (void *)bpf_get_current_task();
-
-	file->dev = (*task)->files->fd_array[access->fd]->f_inode->i_rdev;
-	file->ino = (*task)->files->fd_array[access->fd]->f_inode->i_ino;
+	struct task_struct *task = (void *)bpf_get_current_task();
+	struct file **fd_arr;
+	struct file *file_ptr;
+	BPF_CORE_READ_INTO(&fd_arr, task, files, fd_array);
+	if (fd_arr == NULL) {
+		return -1;
+	}
+	file_ptr = fd_arr[access->fd];
+	if (file_ptr == NULL) {
+		return -1;
+	}
+	BPF_CORE_READ_INTO(&file->dev, file_ptr, f_inode, i_rdev);
+	BPF_CORE_READ_INTO(&file->ino, file_ptr, f_inode, i_ino);
 
 	bpf_map_update_elem(&file_map, access, file, BPF_ANY);
 	bpf_map_update_elem(&file_map_mirror, file, access, BPF_ANY);
