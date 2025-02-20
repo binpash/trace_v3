@@ -15,6 +15,25 @@ struct unique_file_t {
 	ino_t ino;
 };
 
+struct syscall_info_t {
+	enum event_type {SYS_ENTER, SYS_EXIT} type;
+	union {
+		struct {
+			uint64_t syscall_nr;
+			uint64_t arg1;
+			uint64_t arg2;
+			uint64_t arg3;
+			uint64_t arg4;
+			uint64_t arg5;
+			int fd; // for -at syscalls: could be AT_FDCWD
+			char path[4096];
+		} enter;
+		struct {
+			uint64_t ret;
+		} exit;
+	};
+};
+
 struct data_t {
    int pid;
    int uid;

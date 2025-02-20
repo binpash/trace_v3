@@ -1,5 +1,6 @@
 #include <sys/wait.h>
 
+#include <asm/unistd.h>
 #include <bpf/libbpf.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -20,26 +21,44 @@ libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args)
 	return vfprintf(stderr, format, args);
 }
 
+struct hs_trace_bpf *skel;
+
 int
 handle_event(void *ctx, void *data, long unsigned int data_sz)
 {
-	char *m = data;
+	// printf("ctx = %p\n", ctx);
+	struct syscall_info_t *s = data;
+	if (s->type == SYS_ENTER) {
+		printf("%ld(%p, %p, %p, %p, %p) ", s->enter.syscall_nr,
+		       (void *)s->enter.arg1, (void *)s->enter.arg2,
+		       (void *)s->enter.arg3, (void *)s->enter.arg4,
+		       (void *)s->enter.arg5);
+		printf("path from syscall was \"%s\" ", s->enter.path);
+		switch (s->enter.syscall_nr) {
+		case __NR_clone:
 
-	printf("%s\n", m);
-
+			break;
+		default:
+			break;
+		}
+		if (s->enter.fd == AT_FDCWD) {
+			printf("AT_FDCWD ");
+		}
+	} else {
+		printf("-> %ld\n", s->exit.ret);
+	}
 	return 0;
 }
 
-// void
-// lost_event(void *ctx, int cpu, long long unsigned int data_sz)
-// {
-// 	printf("lost event\n");
-// }
+void
+lost_event(void *ctx, int cpu, long long unsigned int data_sz)
+{
+	printf("lost event\n");
+}
 
 int
 main(int argc, char *argv[])
 {
-	struct hs_trace_bpf *skel;
 	int err;
 	struct ring_buffer *rb = NULL;
 
@@ -64,13 +83,15 @@ main(int argc, char *argv[])
 		sigaddset(&set, SIGUSR1);
 		sigprocmask(SIG_BLOCK, &set, NULL);
 
+		/* wait on parent to set up maps first */
 		int sig;
 		if (sigwait(&set, &sig) != 0) {
 			fprintf(stderr, "sigwait: %s\n", strerror(errno));
 			exit(EXIT_FAILURE);
 		}
 
-		execvp(argv[1], argv + 1);
+		argv++;
+		execvp(argv[0], argv);
 		fprintf(stderr, "exec failed\n");
 		exit(EXIT_FAILURE);
 	default:
@@ -92,7 +113,7 @@ main(int argc, char *argv[])
 
 	int val = 1;
 	if (bpf_map__update_elem(skel->maps.pids, &pid, sizeof(pid), &val,
-			  sizeof(val), BPF_ANY) < 0) {
+	                         sizeof(val), BPF_ANY) < 0) {
 		fprintf(stderr, "Failed to update map buffer\n");
 		hs_trace_bpf__destroy(skel);
 		return EXIT_FAILURE;
@@ -106,8 +127,9 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	fprintf(stderr, "now allow child %d to start. send SIGUSR1\n", pid);
+	/* starting child */
 	kill(pid, SIGUSR1);
+	fprintf(stderr, "now allow child %d to start. sent SIGUSR1\n", pid);
 
 	fprintf(stderr, "Now we wait\n");
 	int exit_status;
@@ -128,7 +150,6 @@ main(int argc, char *argv[])
 			printf("Error polling perf buffer: %d\n", err);
 			break;
 		}
-		ring_buffer__consume(rb);
 	}
 
 	ring_buffer__free(rb);
