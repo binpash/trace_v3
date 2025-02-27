@@ -1,15 +1,20 @@
+#define USER
+#include "hs_trace.h"
+
+#include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <asm/unistd.h>
 #include <bpf/libbpf.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <libgen.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
+#include <string.h>
 
-#include "hs_trace.h"
 #include "hs_trace.skel.h"
 
 static int
@@ -23,26 +28,107 @@ libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args)
 
 struct hs_trace_bpf *skel;
 
+void
+update_rw_sets(struct syscall_info_t *s, char pathbuf[4096])
+{
+	if (strncmp(pathbuf, "/tmp/pash_spec", 14) == 0 ||
+	    strncmp(pathbuf, "/dev", 4) == 0) {
+		return;
+	}
+	struct bpf_map *read_path_set = skel->maps.read_path_set;
+	struct bpf_map *write_path_set = skel->maps.write_path_set;
+	struct bpf_map *path_set = (s->enter.set_type == READ_SET) ? read_path_set
+	                           : (s->enter.set_type == WRITE_SET)
+	                               ? write_path_set
+	                               : NULL;
+	if (path_set == NULL) {
+		return;
+	}
+
+	if (strncmp(pathbuf, "/dev/tty", 8) == 0) {
+		return;
+	}
+
+	// if (bpf_map__update_elem(path_set, &f, sizeof(f), pathbuf,
+	// 			 sizeof(pathbuf), BPF_EXIST) < 0) {
+	// 	/* the elem exists already so there is a collision */
+	// 	printf("collision in for path: %s\n", pathbuf);
+	// }
+
+	struct stat filedata;
+	struct unique_file_t f;
+	if (stat(pathbuf, &filedata) < 0) {
+		fprintf(stderr, "failed to stat\n");
+		return;
+	}
+	f.dev = filedata.st_rdev;
+	f.ino = filedata.st_ino;
+	if (bpf_map__update_elem(path_set, &f, sizeof(f), pathbuf, sizeof(*pathbuf),
+	                         BPF_ANY) < 0) {
+		return;
+	}
+
+	char buf[PATH_MAX] = {0};
+	char buf2[PATH_MAX] = {0};
+	strcpy(buf, pathbuf);
+	while (1) {
+		snprintf(buf2, PATH_MAX - 1, "%s", dirname(buf));
+		strncpy(buf, buf2, strlen(buf2));
+
+		if (stat(buf, &filedata) < 0) {
+			fprintf(stderr, "failed to stat\n");
+			return;
+		}
+		f.dev = filedata.st_rdev;
+		f.ino = filedata.st_ino;
+		if (bpf_map__update_elem(read_path_set, &f, sizeof(f), buf,
+		                         sizeof(buf), BPF_ANY) < 0) {
+			return;
+		}
+	}
+}
+
 int
 handle_event(void *ctx, void *data, long unsigned int data_sz)
 {
-	// printf("ctx = %p\n", ctx);
 	struct syscall_info_t *s = data;
+	char pathbuf[PATH_MAX] = {0};
 	if (s->type == SYS_ENTER) {
-		printf("%ld(%p, %p, %p, %p, %p) ", s->enter.syscall_nr,
-		       (void *)s->enter.arg1, (void *)s->enter.arg2,
-		       (void *)s->enter.arg3, (void *)s->enter.arg4,
-		       (void *)s->enter.arg5);
-		printf("path from syscall was \"%s\" ", s->enter.path);
+		// printf("%ld(%p, %p, %p, %p, %p) ", s->enter.syscall_nr,
+		//        (void *)s->enter.arg1, (void *)s->enter.arg2,
+		//        (void *)s->enter.arg3, (void *)s->enter.arg4,
+		//        (void *)s->enter.arg5);
+		// printf("path from syscall was \"%s\"\n", s->enter.path);
+		// if (s->enter.fd == AT_FDCWD) {
+		// 	printf("AT_FDCWD\n");
+		// }
 		switch (s->enter.syscall_nr) {
+		case __NR_exit:
 		case __NR_clone:
-
 			break;
 		default:
+			// TODO: probably need to differentiate between the syscall types
+			// here too.
+			if (s->enter.fd != -1 && s->enter.fd != AT_FDCWD) {
+				char linkpath[sizeof("/proc/%u/fd/%u") + 2 * sizeof(int) * 3] =
+					{0};
+				sprintf(linkpath, "/proc/%u/fd/%u", s->enter.pid, s->enter.fd);
+				int n;
+				if ((n = readlink(linkpath, pathbuf, PATH_MAX - 1)) < 0) {
+					return 0;
+				}
+				pathbuf[n] = '\0';
+				if (n + 1 + strlen(s->enter.path) < PATH_MAX) {
+					strcat(pathbuf, "/");
+					strcat(pathbuf, s->enter.path);
+				}
+			}
+			if (realpath(s->enter.path, pathbuf) == NULL) {
+				fprintf(stderr, "failed to canonicalize path\n");
+				return 0;
+			}
+			update_rw_sets(s, pathbuf);
 			break;
-		}
-		if (s->enter.fd == AT_FDCWD) {
-			printf("AT_FDCWD ");
 		}
 	} else {
 		printf("-> %ld\n", s->exit.ret);
@@ -133,13 +219,16 @@ main(int argc, char *argv[])
 
 	fprintf(stderr, "Now we wait\n");
 	int exit_status;
-	if (wait(&exit_status) == -1) {
-		fprintf(stderr, "Failed to wait for child\n");
-	}
-
-	fprintf(stderr, "done waiting\n");
-
-	for (;;) {
+	// if (wait(&exit_status) == -1) {
+	// 	fprintf(stderr, "Failed to wait for child\n");
+	// }
+	pid_t child = 0;
+	do {
+		child = waitpid(pid, &exit_status, WNOHANG);
+		if (child == -1) {
+			fprintf(stderr, "bad waitpid\n");
+			break;
+		}
 		err = ring_buffer__poll(rb, 100 /* timeout, ms */);
 		// Ctrl-C gives -EINTR
 		if (err == -EINTR) {
@@ -150,7 +239,23 @@ main(int argc, char *argv[])
 			printf("Error polling perf buffer: %d\n", err);
 			break;
 		}
-	}
+
+	} while (child == 0);
+
+	// fprintf(stderr, "done waiting\n");
+	//
+	// for (;;) {
+	// 	err = ring_buffer__poll(rb, 100 /* timeout, ms */);
+	// 	// Ctrl-C gives -EINTR
+	// 	if (err == -EINTR) {
+	// 		err = 0;
+	// 		break;
+	// 	}
+	// 	if (err < 0) {
+	// 		printf("Error polling perf buffer: %d\n", err);
+	// 		break;
+	// 	}
+	// }
 
 	ring_buffer__free(rb);
 	hs_trace_bpf__destroy(skel);

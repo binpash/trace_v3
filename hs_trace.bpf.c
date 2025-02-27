@@ -1,4 +1,5 @@
-#include "vmlinux.h"
+#define KERNEL
+#include "hs_trace.h"
 
 #include <asm/unistd.h>
 #include <bpf/bpf_core_read.h>
@@ -6,11 +7,9 @@
 #include <bpf/bpf_tracing.h>
 #include <linux/limits.h>
 
-#include "hs_trace.h"
-
 struct {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
-	__uint(max_entries, 128 * 4096);
+	__uint(max_entries, 1024 * 1024);
 } output SEC(".maps");
 
 // struct {
@@ -29,10 +28,17 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__type(key, char [4096]);
-	__type(value, int);
+	__type(key, struct unique_file_t);
+	__type(value, char[4096]);
 	__uint(max_entries, 256);
-} path_set SEC(".maps");
+} read_path_set SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, struct unique_file_t);
+	__type(value, char[4096]);
+	__uint(max_entries, 256);
+} write_path_set SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_QUEUE);
@@ -59,12 +65,14 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 
 	int fd = -1;
 	char *path = NULL;
+	enum rw_set_t set_type = UNKNOWN;
 
 	switch (syscall_id) {
-	// case __NR_clone:
-
+		// case __NR_clone:
 	case __NR_exit:
-		bpf_map_delete_elem(&pids, &pid);
+		if (bpf_map_delete_elem(&pids, &pid) < 0) {
+			bpf_printk("failed to remove pid\n");
+		}
 		break;
 	case __NR_openat: /* individually */
 		fd = (int)PT_REGS_PARM1_CORE(regs);
@@ -74,25 +82,27 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	case __NR_statfs:
 	case __NR_getxattr:
 	case __NR_lgetxattr:
-	// case __NR_stat:
-	// case __NR_lstat:
-	// case __NR_access:
-	// case __NR_readlink:
+		// case __NR_stat:
+		// case __NR_lstat:
+		// case __NR_access:
+		// case __NR_readlink:
 		path = (char *)PT_REGS_PARM1_CORE(regs);
+		set_type = READ_SET;
 		break;
 	case __NR_truncate: /* w_first_path_set */
 	case __NR_acct:
-	// case __NR_mkdir:
-	// case __NR_rmdir:
-	// case __NR_creat:
-	// case __NR_chmod:
-	// case __NR_chown:
-	// case __NR_lchown:
-	// case __NR_utime:
-	// case __NR_utimes:
-	// case __NR_mknod:
-	// case __NR_unlink:
+		// case __NR_mkdir:
+		// case __NR_rmdir:
+		// case __NR_creat:
+		// case __NR_chmod:
+		// case __NR_chown:
+		// case __NR_lchown:
+		// case __NR_utime:
+		// case __NR_utimes:
+		// case __NR_mknod:
+		// case __NR_unlink:
 		path = (char *)PT_REGS_PARM1_CORE(regs);
+		set_type = WRITE_SET;
 		break;
 	case __NR_newfstatat: /* r_fd_path_set */
 	case __NR_statx:
@@ -103,6 +113,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	case __NR_execveat:
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		path = (char *)PT_REGS_PARM2_CORE(regs);
+		set_type = READ_SET;
 		break;
 	case __NR_linkat: /* w_fd_path_set */
 	case __NR_unlinkat:
@@ -111,9 +122,10 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	case __NR_mknodat:
 	case __NR_fchownat:
 	case __NR_fchmodat:
-	// case __NR_futimeat:
+		// case __NR_futimeat:
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		path = (char *)PT_REGS_PARM2_CORE(regs);
+		set_type = WRITE_SET;
 		break;
 	default:
 		return 0;
@@ -133,6 +145,8 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	info->enter.arg3 = PT_REGS_PARM3_CORE(regs);
 	info->enter.arg4 = PT_REGS_PARM4_CORE(regs);
 	info->enter.arg5 = PT_REGS_PARM5_CORE(regs);
+	info->enter.set_type = set_type;
+	info->enter.pid = pid;
 	info->enter.fd = fd;
 	bpf_probe_read_user_str(&info->enter.path, sizeof(info->enter.path), path);
 
@@ -224,7 +238,7 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 	case __NR_mknodat:
 	case __NR_fchownat:
 	case __NR_fchmodat:
-	// case __NR_futimeat:
+		// case __NR_futimeat:
 		break;
 	default:
 		return 0;
