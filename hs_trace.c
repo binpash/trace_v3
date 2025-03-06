@@ -5,6 +5,7 @@
 #include <sys/wait.h>
 
 #include <asm/unistd.h>
+#include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -29,7 +30,7 @@ libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args)
 struct hs_trace_bpf *skel;
 
 void
-update_rw_sets(struct syscall_info_t *s, char pathbuf[4096])
+update_rw_sets(struct syscall_info_t *s, char pathbuf[PATH_MAX])
 {
 	if (strncmp(pathbuf, "/tmp/pash_spec", 14) == 0 ||
 	    strncmp(pathbuf, "/dev", 4) == 0) {
@@ -41,6 +42,7 @@ update_rw_sets(struct syscall_info_t *s, char pathbuf[4096])
 	                           : (s->enter.set_type == WRITE_SET)
 	                               ? write_path_set
 	                               : NULL;
+
 	if (path_set == NULL) {
 		return;
 	}
@@ -63,15 +65,17 @@ update_rw_sets(struct syscall_info_t *s, char pathbuf[4096])
 	}
 	f.dev = filedata.st_rdev;
 	f.ino = filedata.st_ino;
-	if (bpf_map__update_elem(path_set, &f, sizeof(f), pathbuf, sizeof(*pathbuf),
+	printf("attempting to add '%s'\n", pathbuf);
+	if (bpf_map__update_elem(path_set, &f, sizeof(f), &pathbuf, PATH_MAX,
 	                         BPF_ANY) < 0) {
+		printf("failed to add '%s'\n", pathbuf);
 		return;
 	}
 
 	char buf[PATH_MAX] = {0};
 	char buf2[PATH_MAX] = {0};
 	strcpy(buf, pathbuf);
-	while (1) {
+	while (true) {
 		snprintf(buf2, PATH_MAX - 1, "%s", dirname(buf));
 		strncpy(buf, buf2, strlen(buf2));
 
@@ -81,8 +85,14 @@ update_rw_sets(struct syscall_info_t *s, char pathbuf[4096])
 		}
 		f.dev = filedata.st_rdev;
 		f.ino = filedata.st_ino;
-		if (bpf_map__update_elem(read_path_set, &f, sizeof(f), buf,
-		                         sizeof(buf), BPF_ANY) < 0) {
+		printf("attempting to add '%s' to readset\n", buf);
+		if (bpf_map__update_elem(read_path_set, &f, sizeof(f), &buf, PATH_MAX,
+		                         BPF_ANY) < 0) {
+			printf("failed to add '%s' to readset\n", buf);
+			return; // TODO: 2025-03-06 do I want to return??
+		}
+
+		if (strcmp(buf, "/") == 0) {
 			return;
 		}
 	}
@@ -124,14 +134,15 @@ handle_event(void *ctx, void *data, long unsigned int data_sz)
 				}
 			}
 			if (realpath(s->enter.path, pathbuf) == NULL) {
-				fprintf(stderr, "failed to canonicalize path\n");
+				// fprintf(stderr, "failed to canonicalize path\n");
 				return 0;
 			}
 			update_rw_sets(s, pathbuf);
 			break;
 		}
 	} else {
-		printf("-> %ld\n", s->exit.ret);
+		// Return code of syscall
+		// printf("-> %ld\n", s->exit.ret);
 	}
 	return 0;
 }
@@ -140,6 +151,47 @@ void
 lost_event(void *ctx, int cpu, long long unsigned int data_sz)
 {
 	printf("lost event\n");
+}
+
+void
+dump_path_set(struct bpf_map *path_set)
+{
+	struct unique_file_t prev_key = {0};
+	struct unique_file_t key = {0};
+	int err = bpf_map__get_next_key(path_set, NULL, &key,
+	                                 sizeof(struct unique_file_t));
+	if (err == -ENOENT) {
+		printf("Empty\n");
+		return;
+	}
+	while (true) {
+		if (err == -ENOENT) {
+			break;
+		}
+		else if (err < 0) {
+			printf("err getting next key\n");
+			return;
+		}
+		char buf[PATH_MAX] = {0};
+		if (bpf_map__lookup_elem(path_set, &key, sizeof(struct unique_file_t),
+		                         &buf, PATH_MAX, BPF_ANY) < 0) {
+			return;
+		}
+		printf("%s\n", buf);
+		prev_key = key;
+		err = bpf_map__get_next_key(path_set, &prev_key, &key,
+	                           sizeof(struct unique_file_t));
+
+	}
+}
+
+void
+dump_path_sets()
+{
+	printf("Read set:\n");
+	dump_path_set(skel->maps.read_path_set);
+	printf("Write set:\n");
+	dump_path_set(skel->maps.write_path_set);
 }
 
 int
@@ -256,6 +308,9 @@ main(int argc, char *argv[])
 	// 		break;
 	// 	}
 	// }
+
+	dump_path_sets();
+
 
 	ring_buffer__free(rb);
 	hs_trace_bpf__destroy(skel);
