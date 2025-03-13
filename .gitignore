@@ -9,6 +9,7 @@
 
 !Makefile
 vmlinux.h
+*.skel.h
 
 *.o
 
