@@ -281,7 +281,7 @@ main(int argc, char *argv[])
 			fprintf(stderr, "bad waitpid\n");
 			break;
 		}
-		err = ring_buffer__poll(rb, 100 /* timeout, ms */);
+		err = ring_buffer__poll(rb, 10 /* timeout, ms */);
 		// Ctrl-C gives -EINTR
 		if (err == -EINTR) {
 			err = 0;
