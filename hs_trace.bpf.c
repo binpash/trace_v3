@@ -12,20 +12,6 @@ struct {
 	__uint(max_entries, 1024 * 1024);
 } output SEC(".maps");
 
-// struct {
-// 	__uint(type, BPF_MAP_TYPE_HASH);
-// 	__type(key, struct file_access_t);
-// 	__type(value, struct unique_file_t);
-// 	__uint(max_entries, 10240);
-// } file_map SEC(".maps");
-//
-// struct {
-// 	__uint(type, BPF_MAP_TYPE_HASH);
-// 	__type(key, struct unique_file_t);
-// 	__type(value, struct file_access_t);
-// 	__uint(max_entries, 10240);
-// } file_map_mirror SEC(".maps");
-
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__type(key, struct unique_file_t);
@@ -73,7 +59,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		if (bpf_map_delete_elem(&pids, &pid) < 0) {
 			bpf_printk("failed to remove pid\n");
 		}
-		break;
+		return 0;
 	case __NR_openat: /* individually */
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		path = (char *)PT_REGS_PARM2_CORE(regs);
