@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #define USER
 #include "hs_trace.h"
 
@@ -42,8 +43,7 @@ update_rw_sets(struct syscall_info_t *s, char pathbuf[PATH_MAX])
 	                           : (s->enter.set_type == WRITE_SET)
 	                               ? write_path_set
 	                               : NULL;
-
-	if (path_set == NULL) {
+	if (path_set == NULL) { // ignore the event now. it probably isn't a read or write update...
 		return;
 	}
 
@@ -60,24 +60,26 @@ update_rw_sets(struct syscall_info_t *s, char pathbuf[PATH_MAX])
 	struct stat filedata;
 	struct unique_file_t f;
 	if (stat(pathbuf, &filedata) < 0) {
-		fprintf(stderr, "failed to stat\n");
+		fprintf(stderr, "stat %s: %s\n", pathbuf, strerror(errno));
 		return;
 	}
 	f.dev = filedata.st_rdev;
 	f.ino = filedata.st_ino;
-	printf("attempting to add '%s'\n", pathbuf);
-	if (bpf_map__update_elem(path_set, &f, sizeof(f), &pathbuf, PATH_MAX,
-	                         BPF_ANY) < 0) {
-		printf("failed to add '%s'\n", pathbuf);
-		return;
-	}
 
 	char buf[PATH_MAX] = {0};
 	char buf2[PATH_MAX] = {0};
 	strcpy(buf, pathbuf);
+	printf("attempting to add '%s'\n", buf);
+	if (bpf_map__update_elem(path_set, &f, sizeof(f), &buf, PATH_MAX,
+	                         BPF_ANY) < 0) {
+		printf("failed to add '%s'\n", buf);
+		return;
+	}
+
 	while (true) {
 		snprintf(buf2, PATH_MAX - 1, "%s", dirname(buf));
-		strncpy(buf, buf2, strlen(buf2));
+		char *end = stpncpy(buf, buf2, strlen(buf2) + 1);
+		*end = '\0';
 
 		if (stat(buf, &filedata) < 0) {
 			fprintf(stderr, "failed to stat\n");
@@ -116,13 +118,21 @@ handle_event(void *ctx, void *data, long unsigned int data_sz)
 		case __NR_exit:
 		case __NR_clone:
 			break;
+		case __NR_openat: // TODO: handle this and other syscalls
+			break;
 		default:
 			// TODO: probably need to differentiate between the syscall types
 			// here too.
+			// TODO: Need to handle AT_FDCWD correctly by reading the process cwd...
+			// NOTE: here we should have (fd, path), (AT_FDCWD, path) or just (-1, path).
+			// path resolution for relative paths uses CWD by default I think
 			if (s->enter.fd != -1 && s->enter.fd != AT_FDCWD) {
-				char linkpath[sizeof("/proc/%u/fd/%u") + 2 * sizeof(int) * 3] =
-					{0};
-				sprintf(linkpath, "/proc/%u/fd/%u", s->enter.pid, s->enter.fd);
+				// NOTE: assume procfs links to canon paths
+
+				// char linkpath[sizeof("/proc/%u/fd/%u") + 2 * sizeof(int) * 3] =
+				// 	{0};
+				char *linkpath;
+				if (asprintf(&linkpath, "/proc/%u/fd/%u", s->enter.pid, s->enter.fd) < 0) { return 0; }
 				int n;
 				if ((n = readlink(linkpath, pathbuf, PATH_MAX - 1)) < 0) {
 					return 0;
@@ -132,10 +142,12 @@ handle_event(void *ctx, void *data, long unsigned int data_sz)
 					strcat(pathbuf, "/");
 					strcat(pathbuf, s->enter.path);
 				}
-			}
-			if (realpath(s->enter.path, pathbuf) == NULL) {
-				// fprintf(stderr, "failed to canonicalize path\n");
-				return 0;
+			} else {
+				// NOTE: Do canon for only AT_FDCWD and just path
+				if (realpath(s->enter.path, pathbuf) == NULL) {
+					fprintf(stderr, "failed to canonicalize path: %s\n", s->enter.path);
+					return 0;
+				}
 			}
 			update_rw_sets(s, pathbuf);
 			break;
