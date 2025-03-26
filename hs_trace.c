@@ -30,6 +30,8 @@ libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args)
 
 struct hs_trace_bpf *skel;
 
+volatile sig_atomic_t running = true;
+
 void
 update_rw_sets(struct syscall_info_t *s, char pathbuf[PATH_MAX])
 {
@@ -43,7 +45,8 @@ update_rw_sets(struct syscall_info_t *s, char pathbuf[PATH_MAX])
 	                           : (s->enter.set_type == WRITE_SET)
 	                               ? write_path_set
 	                               : NULL;
-	if (path_set == NULL) { // ignore the event now. it probably isn't a read or write update...
+	if (path_set == NULL) { // ignore the event now. it probably isn't a read or
+		                    // write update...
 		return;
 	}
 
@@ -70,8 +73,8 @@ update_rw_sets(struct syscall_info_t *s, char pathbuf[PATH_MAX])
 	char buf2[PATH_MAX] = {0};
 	strcpy(buf, pathbuf);
 	printf("attempting to add '%s'\n", buf);
-	if (bpf_map__update_elem(path_set, &f, sizeof(f), &buf, PATH_MAX,
-	                         BPF_ANY) < 0) {
+	if (bpf_map__update_elem(path_set, &f, sizeof(f), &buf, PATH_MAX, BPF_ANY) <
+	    0) {
 		printf("failed to add '%s'\n", buf);
 		return;
 	}
@@ -123,16 +126,20 @@ handle_event(void *ctx, void *data, long unsigned int data_sz)
 		default:
 			// TODO: probably need to differentiate between the syscall types
 			// here too.
-			// TODO: Need to handle AT_FDCWD correctly by reading the process cwd...
-			// NOTE: here we should have (fd, path), (AT_FDCWD, path) or just (-1, path).
-			// path resolution for relative paths uses CWD by default I think
+			// TODO: Need to handle AT_FDCWD correctly by reading the process
+			// cwd... NOTE: here we should have (fd, path), (AT_FDCWD, path) or
+			// just (-1, path). path resolution for relative paths uses CWD by
+			// default I think
 			if (s->enter.fd != -1 && s->enter.fd != AT_FDCWD) {
 				// NOTE: assume procfs links to canon paths
 
-				// char linkpath[sizeof("/proc/%u/fd/%u") + 2 * sizeof(int) * 3] =
-				// 	{0};
+				// char linkpath[sizeof("/proc/%u/fd/%u") + 2 * sizeof(int) * 3]
+				// = 	{0};
 				char *linkpath;
-				if (asprintf(&linkpath, "/proc/%u/fd/%u", s->enter.pid, s->enter.fd) < 0) { return 0; }
+				if (asprintf(&linkpath, "/proc/%u/fd/%u", s->enter.pid,
+				             s->enter.fd) < 0) {
+					return 0;
+				}
 				int n;
 				if ((n = readlink(linkpath, pathbuf, PATH_MAX - 1)) < 0) {
 					return 0;
@@ -145,7 +152,8 @@ handle_event(void *ctx, void *data, long unsigned int data_sz)
 			} else {
 				// NOTE: Do canon for only AT_FDCWD and just path
 				if (realpath(s->enter.path, pathbuf) == NULL) {
-					fprintf(stderr, "failed to canonicalize path: %s\n", s->enter.path);
+					fprintf(stderr, "failed to canonicalize path: %s\n",
+					        s->enter.path);
 					return 0;
 				}
 			}
@@ -171,7 +179,7 @@ dump_path_set(struct bpf_map *path_set)
 	struct unique_file_t prev_key = {0};
 	struct unique_file_t key = {0};
 	int err = bpf_map__get_next_key(path_set, NULL, &key,
-	                                 sizeof(struct unique_file_t));
+	                                sizeof(struct unique_file_t));
 	if (err == -ENOENT) {
 		printf("Empty\n");
 		return;
@@ -179,8 +187,7 @@ dump_path_set(struct bpf_map *path_set)
 	while (true) {
 		if (err == -ENOENT) {
 			break;
-		}
-		else if (err < 0) {
+		} else if (err < 0) {
 			printf("err getting next key\n");
 			return;
 		}
@@ -192,8 +199,7 @@ dump_path_set(struct bpf_map *path_set)
 		printf("%s\n", buf);
 		prev_key = key;
 		err = bpf_map__get_next_key(path_set, &prev_key, &key,
-	                           sizeof(struct unique_file_t));
-
+		                            sizeof(struct unique_file_t));
 	}
 }
 
@@ -206,6 +212,12 @@ dump_path_sets()
 	dump_path_set(skel->maps.write_path_set);
 }
 
+void
+sigchld_handler(int signum)
+{
+	running = false;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -216,6 +228,16 @@ main(int argc, char *argv[])
 	if (argc < 2) {
 		fprintf(stderr, "usage: hs_trace <cmd>\n");
 		return EXIT_FAILURE;
+	}
+
+	// Register the signal handler for SIGCHLD
+	struct sigaction sa;
+	sa.sa_handler = sigchld_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+	if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+		perror("sigaction");
+		exit(1);
 	}
 
 	int pid, devnull;
@@ -281,48 +303,25 @@ main(int argc, char *argv[])
 	kill(pid, SIGUSR1);
 	fprintf(stderr, "now allow child %d to start. sent SIGUSR1\n", pid);
 
-	fprintf(stderr, "Now we wait\n");
-	int exit_status;
-	// if (wait(&exit_status) == -1) {
-	// 	fprintf(stderr, "Failed to wait for child\n");
-	// }
-	pid_t child = 0;
-	do {
-		child = waitpid(pid, &exit_status, WNOHANG);
-		if (child == -1) {
-			fprintf(stderr, "bad waitpid\n");
-			break;
-		}
+	while (running) {
 		err = ring_buffer__poll(rb, 10 /* timeout, ms */);
-		// Ctrl-C gives -EINTR
-		if (err == -EINTR) {
-			err = 0;
-			break;
-		}
+		// // Ctrl-C gives -EINTR
+		// if (err == -EINTR) {
+		// 	err = 0;
+		// 	break;
+		// }
 		if (err < 0) {
 			printf("Error polling perf buffer: %d\n", err);
 			break;
 		}
+	}
 
-	} while (child == 0);
-
-	// fprintf(stderr, "done waiting\n");
-	//
-	// for (;;) {
-	// 	err = ring_buffer__poll(rb, 100 /* timeout, ms */);
-	// 	// Ctrl-C gives -EINTR
-	// 	if (err == -EINTR) {
-	// 		err = 0;
-	// 		break;
-	// 	}
-	// 	if (err < 0) {
-	// 		printf("Error polling perf buffer: %d\n", err);
-	// 		break;
-	// 	}
-	// }
+	int exit_status;
+	if (wait(&exit_status) != pid) {
+		fprintf(stderr, "wait: %s\n", strerror(errno));
+	}
 
 	dump_path_sets();
-
 
 	ring_buffer__free(rb);
 	hs_trace_bpf__destroy(skel);
