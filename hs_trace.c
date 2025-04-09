@@ -3,6 +3,7 @@
 #include "hs_trace.h"
 
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 
 #include <asm/unistd.h>
@@ -72,10 +73,10 @@ update_rw_sets(struct syscall_info_t *s, char pathbuf[PATH_MAX])
 	char buf[PATH_MAX] = {0};
 	char buf2[PATH_MAX] = {0};
 	strcpy(buf, pathbuf);
-	printf("attempting to add '%s'\n", buf);
+	fprintf(stderr, "attempting to add '%s'\n", buf);
 	if (bpf_map__update_elem(path_set, &f, sizeof(f), &buf, PATH_MAX, BPF_ANY) <
 	    0) {
-		printf("failed to add '%s'\n", buf);
+		fprintf(stderr, "failed to add '%s'\n", buf);
 		return;
 	}
 
@@ -90,10 +91,10 @@ update_rw_sets(struct syscall_info_t *s, char pathbuf[PATH_MAX])
 		}
 		f.dev = filedata.st_rdev;
 		f.ino = filedata.st_ino;
-		printf("attempting to add '%s' to readset\n", buf);
+		fprintf(stderr, "attempting to add '%s' to readset\n", buf);
 		if (bpf_map__update_elem(read_path_set, &f, sizeof(f), &buf, PATH_MAX,
 		                         BPF_ANY) < 0) {
-			printf("failed to add '%s' to readset\n", buf);
+			fprintf(stderr, "failed to add '%s' to readset\n", buf);
 			return; // TODO: 2025-03-06 do I want to return??
 		}
 
@@ -118,16 +119,40 @@ handle_event(void *ctx, void *data, long unsigned int data_sz)
 		// 	printf("AT_FDCWD\n");
 		// }
 		switch (s->enter.syscall_nr) {
+#ifdef __NR_exit
 		case __NR_exit:
-		case __NR_clone:
 			break;
+#endif
+#ifdef __NR_openat
 		case __NR_openat: // TODO: handle this and other syscalls
 			break;
+#endif
+#ifdef __NR_chdir
+		case __NR_chdir:
+			break;
+#endif
+#ifdef __NR_clone
+		case __NR_clone:
+			break;
+#endif
+#ifdef __NR_symlinkat
+		case __NR_symlinkat:
+			break;
+#endif
+#ifdef __NR_open
+		case __NR_open:
+			break;
+#endif
+#ifdef __NR_rename
+		case __NR_rename:
+			break;
+#endif
 		default:
 			// TODO: probably need to differentiate between the syscall types
 			// here too.
 			// TODO: Need to handle AT_FDCWD correctly by reading the process
-			// cwd... NOTE: here we should have (fd, path), (AT_FDCWD, path) or
+			// cwd...
+			// NOTE: here we should have (fd, path), (AT_FDCWD, path) or
 			// just (-1, path). path resolution for relative paths uses CWD by
 			// default I think
 			if (s->enter.fd != -1 && s->enter.fd != AT_FDCWD) {
@@ -305,12 +330,12 @@ main(int argc, char *argv[])
 
 	while (running) {
 		err = ring_buffer__poll(rb, 10 /* timeout, ms */);
-		// // Ctrl-C gives -EINTR
-		// if (err == -EINTR) {
-		// 	err = 0;
-		// 	break;
-		// }
-		if (err < 0) {
+		// Ctrl-C gives -EINTR
+		if (err == -EINTR && running) {
+			err = 0;
+			break;
+		}
+		if (err < 0 && running) {
 			printf("Error polling perf buffer: %d\n", err);
 			break;
 		}

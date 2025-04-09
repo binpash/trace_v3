@@ -54,61 +54,154 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	enum rw_set_t set_type = UNKNOWN;
 
 	switch (syscall_id) {
-		// case __NR_clone:
+#ifdef __NR_exit
 	case __NR_exit:
 		if (bpf_map_delete_elem(&pids, &pid) < 0) {
 			bpf_printk("failed to remove pid\n");
 		}
 		return 0;
+#endif
+#ifdef __NR_openat
 	case __NR_openat: /* individually */
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		path = (char *)PT_REGS_PARM2_CORE(regs);
 		break;
+#endif
+#ifdef __NR_chdir
+	case __NR_chdir:
+		break;
+#endif
+#ifdef __NR_clone
+	case __NR_clone:
+		break;
+#endif
+#ifdef __NR_symlinkat
+	case __NR_symlinkat:
+		break;
+#endif
+#ifdef __NR_open
+	case __NR_open:
+		break;
+#endif
+#ifdef __NR_rename
+	case __NR_rename:
+		break;
+#endif
+#ifdef __NR_execve
 	case __NR_execve: /* r_first_path_set */
+#endif
+#ifdef __NR_statfs
 	case __NR_statfs:
+#endif
+#ifdef __NR_getxattr
 	case __NR_getxattr:
+#endif
+#ifdef __NR_lgetxattr
 	case __NR_lgetxattr:
-		// case __NR_stat:
-		// case __NR_lstat:
-		// case __NR_access:
-		// case __NR_readlink:
+#endif
+#ifdef __NR_stat
+	case __NR_stat:
+#endif
+#ifdef __NR_lstat
+	case __NR_lstat:
+#endif
+#ifdef __NR_access
+	case __NR_access:
+#endif
+#ifdef __NR_readlink
+	case __NR_readlink:
+#endif
 		path = (char *)PT_REGS_PARM1_CORE(regs);
 		set_type = READ_SET;
 		break;
+#ifdef __NR_truncate
 	case __NR_truncate: /* w_first_path_set */
+#endif
+#ifdef __NR_acct
 	case __NR_acct:
-		// case __NR_mkdir:
-		// case __NR_rmdir:
-		// case __NR_creat:
-		// case __NR_chmod:
-		// case __NR_chown:
-		// case __NR_lchown:
-		// case __NR_utime:
-		// case __NR_utimes:
-		// case __NR_mknod:
-		// case __NR_unlink:
+#endif
+#ifdef __NR_mkdir
+	case __NR_mkdir:
+#endif
+#ifdef __NR_rmdir
+	case __NR_rmdir:
+#endif
+#ifdef __NR_creat
+	case __NR_creat:
+#endif
+#ifdef __NR_chmod
+	case __NR_chmod:
+#endif
+#ifdef __NR_chown
+	case __NR_chown:
+#endif
+#ifdef __NR_lchown
+	case __NR_lchown:
+#endif
+#ifdef __NR_utime
+	case __NR_utime:
+#endif
+#ifdef __NR_utimes
+	case __NR_utimes:
+#endif
+#ifdef __NR_mknod
+	case __NR_mknod:
+#endif
+#ifdef __NR_unlink
+	case __NR_unlink:
+#endif
 		path = (char *)PT_REGS_PARM1_CORE(regs);
 		set_type = WRITE_SET;
 		break;
+#ifdef __NR_newfstatat
 	case __NR_newfstatat: /* r_fd_path_set */
+#endif
+#ifdef __NR_statx
 	case __NR_statx:
+#endif
+#ifdef __NR_name_to_handle_at
 	case __NR_name_to_handle_at:
+#endif
+#ifdef __NR_readlinkat
 	case __NR_readlinkat:
+#endif
+#ifdef __NR_faccessat
 	case __NR_faccessat:
+#endif
+#ifdef __NR_faccessat2
 	case __NR_faccessat2:
+#endif
+#ifdef __NR_execveat
 	case __NR_execveat:
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		path = (char *)PT_REGS_PARM2_CORE(regs);
 		set_type = READ_SET;
 		break;
+#endif
+#ifdef __NR_linkat
 	case __NR_linkat: /* w_fd_path_set */
+#endif
+#ifdef __NR_unlinkat
 	case __NR_unlinkat:
+#endif
+#ifdef __NR_utimensat
 	case __NR_utimensat:
+#endif
+#ifdef __NR_mkdirat
 	case __NR_mkdirat:
+#endif
+#ifdef __NR_mknodat
 	case __NR_mknodat:
+#endif
+#ifdef __NR_fchownat
 	case __NR_fchownat:
+#endif
+#ifdef __NR_fchmodat
 	case __NR_fchmodat:
-		// case __NR_futimeat:
+#endif
+#ifdef __NR_futimeat
+	case __NR_futimeat:
+#endif
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		path = (char *)PT_REGS_PARM2_CORE(regs);
 		set_type = WRITE_SET;
@@ -187,44 +280,132 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 	}
 
 	switch (syscall_id) {
-	case __NR_clone:
+#ifdef __NR_exit
 	case __NR_exit:
+#endif
+#ifdef __NR_openat
 	case __NR_openat: /* individually */
+#endif
+#ifdef __NR_chdir
+	case __NR_chdir:
+#endif
+#ifdef __NR_clone
+	case __NR_clone:
+#endif
+#ifdef __NR_symlinkat
+	case __NR_symlinkat:
+#endif
+#ifdef __NR_open
+	case __NR_open:
+#endif
+#ifdef __NR_rename
+	case __NR_rename:
+#endif
+#ifdef __NR_execve
 	case __NR_execve: /* r_first_path_set */
+#endif
+#ifdef __NR_statfs
 	case __NR_statfs:
+#endif
+#ifdef __NR_getxattr
 	case __NR_getxattr:
+#endif
+#ifdef __NR_lgetxattr
 	case __NR_lgetxattr:
-	// case __NR_stat:
-	// case __NR_lstat:
-	// case __NR_access:
-	// case __NR_readlink:
+#endif
+#ifdef __NR_stat
+	case __NR_stat:
+#endif
+#ifdef __NR_lstat
+	case __NR_lstat:
+#endif
+#ifdef __NR_access
+	case __NR_access:
+#endif
+#ifdef __NR_readlink
+	case __NR_readlink:
+#endif
+#ifdef __NR_truncate
 	case __NR_truncate: /* w_first_path_set */
+#endif
+#ifdef __NR_acct
 	case __NR_acct:
-	// case __NR_mkdir:
-	// case __NR_rmdir:
-	// case __NR_creat:
-	// case __NR_chmod:
-	// case __NR_chown:
-	// case __NR_lchown:
-	// case __NR_utime:
-	// case __NR_utimes:
-	// case __NR_mknod:
-	// case __NR_unlink:
+#endif
+#ifdef __NR_mkdir
+	case __NR_mkdir:
+#endif
+#ifdef __NR_rmdir
+	case __NR_rmdir:
+#endif
+#ifdef __NR_creat
+	case __NR_creat:
+#endif
+#ifdef __NR_chmod
+	case __NR_chmod:
+#endif
+#ifdef __NR_chown
+	case __NR_chown:
+#endif
+#ifdef __NR_lchown
+	case __NR_lchown:
+#endif
+#ifdef __NR_utime
+	case __NR_utime:
+#endif
+#ifdef __NR_utimes
+	case __NR_utimes:
+#endif
+#ifdef __NR_mknod
+	case __NR_mknod:
+#endif
+#ifdef __NR_unlink
+	case __NR_unlink:
+#endif
+#ifdef __NR_newfstatat
 	case __NR_newfstatat: /* r_fd_path_set */
+#endif
+#ifdef __NR_statx
 	case __NR_statx:
+#endif
+#ifdef __NR_name_to_handle_at
 	case __NR_name_to_handle_at:
+#endif
+#ifdef __NR_readlinkat
 	case __NR_readlinkat:
+#endif
+#ifdef __NR_faccessat
 	case __NR_faccessat:
+#endif
+#ifdef __NR_faccessat2
 	case __NR_faccessat2:
+#endif
+#ifdef __NR_execveat
 	case __NR_execveat:
+#endif
+#ifdef __NR_linkat
 	case __NR_linkat: /* w_fd_path_set */
+#endif
+#ifdef __NR_unlinkat
 	case __NR_unlinkat:
+#endif
+#ifdef __NR_utimensat
 	case __NR_utimensat:
+#endif
+#ifdef __NR_mkdirat
 	case __NR_mkdirat:
+#endif
+#ifdef __NR_mknodat
 	case __NR_mknodat:
+#endif
+#ifdef __NR_fchownat
 	case __NR_fchownat:
+#endif
+#ifdef __NR_fchmodat
 	case __NR_fchmodat:
-		// case __NR_futimeat:
+#endif
+#ifdef __NR_futimeat
+	case __NR_futimeat:
+#endif
 		break;
 	default:
 		return 0;
