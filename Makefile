@@ -11,10 +11,11 @@ COMMON_H = ${TARGET:=.h}
 app: $(TARGET) $(BPF_OBJ)
 .PHONY: app
 
+install: $(TARGET) $(BPF_OBJ)
+	sudo install -o root -m 4755 hs_trace /usr/local/bin
+
 $(TARGET): $(USER_C) $(USER_SKEL) $(COMMON_H)
 	gcc -Wall -o $(TARGET) $(USER_C) -L../libbpf/src -l:libbpf.a -lelf -lz
-	sudo chown root:root $(TARGET)
-	sudo chmod u+s $(TARGET)
 
 %.bpf.o: %.bpf.c vmlinux.h $(COMMON_H)
 	clang \
