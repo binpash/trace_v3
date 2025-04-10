@@ -13,3 +13,5 @@ vmlinux.h
 
 *.o
 
+tests/*.out
+tests/*.err

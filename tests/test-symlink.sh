@@ -1,18 +1,20 @@
 #!/bin/sh
 set -e
 
-TRACE=$1
+PROJ_ROOT="${PROJ_ROOT:-$(git rev-parse --show-toplevel)}"
+TEST="${PROJ_ROOT}"/tests
+TRACE=${TRACE:-$1}
 
-mkdir symlink
-cd symlink
+mkdir "${TEST}"/symlink
+cd "${TEST}"/symlink
 cat >file1 <<EOF
 Test file 1
 EOF
 
 ln -s file1 file2
-cd ..
+cd -
 
-"${TRACE}" cat symlink/file1 symlink/file2
+"${TRACE}" cat "${TEST}"/symlink/file1 "${TEST}"/symlink/file2
 
-rm symlink/*
-rmdir symlink
+rm "${TEST}"/symlink/*
+rmdir "${TEST}"/symlink
