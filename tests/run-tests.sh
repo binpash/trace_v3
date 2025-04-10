@@ -2,7 +2,7 @@
 
 export PROJ_ROOT="$(git rev-parse --show-toplevel)"
 
-export TRACE="${PROJ_ROOT}"/hs_trace
+export TRACE=hs_trace
 
 for test in "${PROJ_ROOT}"/tests/test-*.sh
 do
