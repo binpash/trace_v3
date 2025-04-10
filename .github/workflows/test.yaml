@@ -21,7 +21,7 @@ jobs:
 
       - name: install deps
         run: |
-          # sudo apt-get update
+          sudo apt-get update
           sudo apt-get install gcc clang llvm bpftool libbpf-dev
 
       - name: checkout
