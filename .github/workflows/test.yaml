@@ -1,0 +1,37 @@
+name: Run Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+
+      - name: install deps
+        run: |
+          sudo apt install gcc clang llvm bpftool libbpf-dev
+
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: build
+        run: |
+          make
+          sudo make install
+
+      - name: run tests
+        run: |
+          ./tests/run-tests.sh
+
