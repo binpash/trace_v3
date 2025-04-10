@@ -25,7 +25,7 @@ jobs:
       - name: install deps
         run: |
           sudo apt-get update
-          sudo apt-get install gcc clang llvm libbpf-dev zlib libelf
+          sudo apt-get install gcc clang llvm libbpf-dev zlib1g-dev libelf-dev
           git clone --recurse-submodules https://github.com/libbpf/bpftool.git
           cd bpftool/src
           make
