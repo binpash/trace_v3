@@ -1,8 +1,7 @@
 #ifdef USER
 #include <sys/types.h>
-
 #include <unistd.h>
-#elifdef KERNEL
+#else
 #include "vmlinux.h"
 #endif
 
@@ -26,7 +25,7 @@ struct unique_file_t {
 enum rw_set_t {
 	READ_SET,
 	WRITE_SET,
-	UNKNOWN
+	UNKNOWN_SET,
 };
 
 struct sys_enter_info_t {

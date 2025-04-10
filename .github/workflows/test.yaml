@@ -32,6 +32,7 @@ jobs:
           sudo make install
           cd ../..
           which bpftool
+          clang --version
 
 
       - name: checkout

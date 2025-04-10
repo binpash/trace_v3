@@ -20,11 +20,11 @@ $(TARGET): $(USER_C) $(USER_SKEL) $(COMMON_H)
 %.bpf.o: %.bpf.c vmlinux.h $(COMMON_H)
 	clang \
 	    -target bpf \
-	    -D __BPF_TRACING__ \
-        -D __TARGET_ARCH_$(ARCH) \
-	    -Wall \
+		-D __BPF_TRACING__ \
+		-D __TARGET_ARCH_$(ARCH) \
+		-Wall \
 		-I/usr/include/$(shell uname -m)-linux-gnu \
-	    -O2 -g -o $@ -c $<
+		-O2 -g -o $@ -c $<
 	llvm-strip -g $@
 
 $(USER_SKEL): $(BPF_OBJ)

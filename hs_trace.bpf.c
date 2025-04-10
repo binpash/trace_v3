@@ -1,4 +1,3 @@
-#define KERNEL
 #include "hs_trace.h"
 
 #include <asm/unistd.h>
@@ -51,7 +50,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 
 	int fd = -1;
 	char *path = NULL;
-	enum rw_set_t set_type = UNKNOWN;
+	enum rw_set_t set_type = UNKNOWN_SET;
 
 	switch (syscall_id) {
 #ifdef __NR_exit
