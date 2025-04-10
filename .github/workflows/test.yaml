@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         os:
           - ubuntu-latest
@@ -18,11 +18,21 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
+      - name: check bpf
+        run: |
+          cat /boot/config-$(uname -r) | grep BPF
 
       - name: install deps
         run: |
           sudo apt-get update
-          sudo apt-get install gcc clang llvm bpftool libbpf-dev
+          sudo apt-get install gcc clang llvm libbpf-dev zlib libelf
+          git clone --recurse-submodules https://github.com/libbpf/bpftool.git
+          cd bpftool/src
+          make
+          sudo make install
+          cd ../..
+          which bpftool
+
 
       - name: checkout
         uses: actions/checkout@v4
