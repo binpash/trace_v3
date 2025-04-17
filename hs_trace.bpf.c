@@ -211,8 +211,8 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 
 	bpf_printk("sys_enter called on %ld\n", syscall_id);
 
-	struct syscall_info_t *info =
-		bpf_ringbuf_reserve(&output, sizeof(struct syscall_info_t), 0);
+	struct syscall_event_t *info =
+		bpf_ringbuf_reserve(&output, sizeof(struct syscall_event_t), 0);
 	if (info == NULL) {
 		return 0;
 	}
@@ -410,8 +410,8 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 		return 0;
 	}
 
-	struct syscall_info_t *info =
-		bpf_ringbuf_reserve(&output, sizeof(struct syscall_info_t), 0);
+	struct syscall_event_t *info =
+		bpf_ringbuf_reserve(&output, sizeof(struct syscall_event_t), 0);
 	if (info == NULL) {
 		return 0;
 	}

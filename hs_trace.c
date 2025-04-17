@@ -34,7 +34,7 @@ struct hs_trace_bpf *skel;
 volatile sig_atomic_t running = true;
 
 void
-update_rw_sets(struct syscall_info_t *s, char pathbuf[PATH_MAX])
+update_rw_sets(struct syscall_event_t *s, char pathbuf[PATH_MAX])
 {
 	if (strncmp(pathbuf, "/tmp/pash_spec", 14) == 0 ||
 	    strncmp(pathbuf, "/dev", 4) == 0) {
@@ -80,6 +80,8 @@ update_rw_sets(struct syscall_info_t *s, char pathbuf[PATH_MAX])
 		return;
 	}
 
+	// TODO (dan) 2025-04-17: change this to reverse search for the / and set it
+	// to null.
 	while (true) {
 		snprintf(buf2, PATH_MAX - 1, "%s", dirname(buf));
 		char *end = stpncpy(buf, buf2, strlen(buf2) + 1);
@@ -107,87 +109,97 @@ update_rw_sets(struct syscall_info_t *s, char pathbuf[PATH_MAX])
 int
 handle_event(void *ctx, void *data, long unsigned int data_sz)
 {
-	struct syscall_info_t *s = data;
+	// TODO (dan) 2025-04-17: need to combine return code data with the syscall
+	// args before continuing to handle these things
+	static struct syscall_info_t INFO = {0};
+	struct syscall_event_t *s = data;
 	char pathbuf[PATH_MAX] = {0};
 	if (s->type == SYS_ENTER) {
-		// printf("%ld(%p, %p, %p, %p, %p) ", s->enter.syscall_nr,
-		//        (void *)s->enter.arg1, (void *)s->enter.arg2,
-		//        (void *)s->enter.arg3, (void *)s->enter.arg4,
-		//        (void *)s->enter.arg5);
-		// printf("path from syscall was \"%s\"\n", s->enter.path);
-		// if (s->enter.fd == AT_FDCWD) {
-		// 	printf("AT_FDCWD\n");
-		// }
-		switch (s->enter.syscall_nr) {
+		INFO.enter = s->enter;
+		// early return from the enter call so we can gather the exit code info
+		// before doing work
+		return 0;
+	} else {
+		INFO.exit = s->exit;
+	}
+	printf("%ld(%p, %p, %p, %p, %p) ", INFO.enter.syscall_nr,
+	       (void *)INFO.enter.arg1, (void *)INFO.enter.arg2,
+	       (void *)INFO.enter.arg3, (void *)INFO.enter.arg4,
+	       (void *)INFO.enter.arg5);
+	printf("path from syscall was \"%s\"\n", INFO.enter.path);
+	if (INFO.enter.fd == AT_FDCWD) {
+		printf("AT_FDCWD\n");
+	}
+	// Return code of syscall
+	printf("-> %ld\n", INFO.exit.ret);
+	switch (INFO.enter.syscall_nr) {
 #ifdef __NR_exit
-		case __NR_exit:
-			break;
+	case __NR_exit:
+		break;
 #endif
 #ifdef __NR_openat
-		case __NR_openat: // TODO: handle this and other syscalls
-			break;
+	case __NR_openat: // TODO: handle this and other syscalls
+		break;
 #endif
 #ifdef __NR_chdir
-		case __NR_chdir:
-			break;
+	case __NR_chdir:
+		break;
 #endif
 #ifdef __NR_clone
-		case __NR_clone:
-			break;
+	case __NR_clone:
+		break;
 #endif
 #ifdef __NR_symlinkat
-		case __NR_symlinkat:
-			break;
+	case __NR_symlinkat:
+		break;
 #endif
 #ifdef __NR_open
-		case __NR_open:
-			break;
+	case __NR_open:
+		break;
 #endif
 #ifdef __NR_rename
-		case __NR_rename:
-			break;
+	case __NR_rename:
+		break;
 #endif
-		default:
-			// TODO: probably need to differentiate between the syscall types
-			// here too.
-			// TODO: Need to handle AT_FDCWD correctly by reading the process
-			// cwd...
-			// NOTE: here we should have (fd, path), (AT_FDCWD, path) or
-			// just (-1, path). path resolution for relative paths uses CWD by
-			// default I think
-			if (s->enter.fd != -1 && s->enter.fd != AT_FDCWD) {
-				// NOTE: assume procfs links to canon paths
+	default:
+		// TODO: probably need to differentiate between the syscall types
+		// here too.
+		// TODO: Need to handle AT_FDCWD correctly by reading the process
+		// cwd...
+		// NOTE: here we should have (fd, path), (AT_FDCWD, path) or
+		// just (-1, path). path resolution for relative paths uses CWD by
+		// default I think
+		if (s->enter.fd != -1 && s->enter.fd != AT_FDCWD) {
+			// NOTE: assume procfs links to canon paths
 
-				// char linkpath[sizeof("/proc/%u/fd/%u") + 2 * sizeof(int) * 3]
-				// = 	{0};
-				char *linkpath;
-				if (asprintf(&linkpath, "/proc/%u/fd/%u", s->enter.pid,
-				             s->enter.fd) < 0) {
-					return 0;
-				}
-				int n;
-				if ((n = readlink(linkpath, pathbuf, PATH_MAX - 1)) < 0) {
-					return 0;
-				}
-				pathbuf[n] = '\0';
-				if (n + 1 + strlen(s->enter.path) < PATH_MAX) {
-					strcat(pathbuf, "/");
-					strcat(pathbuf, s->enter.path);
-				}
-			} else {
-				// NOTE: Do canon for only AT_FDCWD and just path
-				if (realpath(s->enter.path, pathbuf) == NULL) {
-					fprintf(stderr, "failed to canonicalize path: %s\n",
-					        s->enter.path);
-					return 0;
-				}
+			// char linkpath[sizeof("/proc/%u/fd/%u") + 2 * sizeof(int) * 3]
+			// = 	{0};
+			char *linkpath;
+			if (asprintf(&linkpath, "/proc/%u/fd/%u", s->enter.pid,
+			             s->enter.fd) < 0) {
+				return 0;
 			}
-			update_rw_sets(s, pathbuf);
-			break;
+			int n;
+			if ((n = readlink(linkpath, pathbuf, PATH_MAX - 1)) < 0) {
+				free(linkpath);
+				return 0;
+			}
+			pathbuf[n] = '\0';
+			if (n + 1 + strlen(s->enter.path) < PATH_MAX) {
+				strcat(pathbuf, "/");
+				strcat(pathbuf, s->enter.path);
+			}
+			free(linkpath);
+		} else {
+			// NOTE: Do canon for only AT_FDCWD and just path
+			if (realpath(s->enter.path, pathbuf) == NULL) {
+				fprintf(stderr, "failed to canonicalize path: %s\n",
+				        s->enter.path);
+				return 0;
+			}
 		}
-	} else {
-		// Return code of syscall
-		// printf("-> %ld\n", s->exit.ret);
+		update_rw_sets(s, pathbuf);
+		break;
 	}
 	return 0;
 }

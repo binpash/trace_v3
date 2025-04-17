@@ -50,13 +50,18 @@ enum syscall_event_type {
 	SYS_EXIT
 };
 
-struct syscall_info_t {
+struct syscall_event_t {
 	enum syscall_event_type type;
 
 	union {
 		struct sys_enter_info_t enter;
 		struct sys_exit_info_t exit;
 	};
+};
+
+struct syscall_info_t {
+	struct sys_enter_info_t enter;
+	struct sys_exit_info_t exit;
 };
 
 struct data_t {
