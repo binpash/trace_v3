@@ -195,7 +195,7 @@ handle_event(void *ctx, void *data, long unsigned int data_sz)
 		if (INFO.exit.ret < 0) {
 			set_type = READ_SET;
 			update_rw_sets(set_type, pathbuf);
-		} else if (INFO.enter.flags & O_RDONLY) {
+		} else if ((INFO.enter.flags & 0b11) == O_RDONLY) {
 			set_type = READ_SET;
 			update_rw_sets(set_type, pathbuf);
 			// NOTE: use the return code, which is the fd returned!
