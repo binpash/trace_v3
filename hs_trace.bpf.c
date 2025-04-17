@@ -50,6 +50,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 
 	int fd = -1;
 	char *path = NULL;
+	int flags = 0;
 	enum rw_set_t set_type = UNKNOWN_SET;
 
 	switch (syscall_id) {
@@ -64,6 +65,13 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	case __NR_openat: /* individually */
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		path = (char *)PT_REGS_PARM2_CORE(regs);
+		flags = (int)PT_REGS_PARM3_CORE(regs);
+		break;
+#endif
+#ifdef __NR_open
+	case __NR_open:
+		path = (char *)PT_REGS_PARM1_CORE(regs);
+		flags = (int)PT_REGS_PARM2_CORE(regs);
 		break;
 #endif
 #ifdef __NR_chdir
@@ -76,10 +84,6 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 #endif
 #ifdef __NR_symlinkat
 	case __NR_symlinkat:
-		break;
-#endif
-#ifdef __NR_open
-	case __NR_open:
 		break;
 #endif
 #ifdef __NR_rename
@@ -226,6 +230,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	info->enter.set_type = set_type;
 	info->enter.pid = pid;
 	info->enter.fd = fd;
+	info->enter.flags = flags;
 	bpf_probe_read_user_str(&info->enter.path, sizeof(info->enter.path), path);
 
 	bpf_ringbuf_submit(info, 0);

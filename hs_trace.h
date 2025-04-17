@@ -38,6 +38,7 @@ struct sys_enter_info_t {
 	enum rw_set_t set_type;
 	int pid;
 	int fd; // for -at syscalls: could be AT_FDCWD
+	int flags; // for open* and clone
 	char path[4096];
 };
 

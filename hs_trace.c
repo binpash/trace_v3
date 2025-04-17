@@ -34,7 +34,54 @@ struct hs_trace_bpf *skel;
 volatile sig_atomic_t running = true;
 
 void
-update_rw_sets(struct syscall_event_t *s, char pathbuf[PATH_MAX])
+construct_path_at(pid_t pid, int fd, const char *restrict path,
+                  char *restrict buf)
+{
+	char *base = NULL;
+	char *base_fmt = NULL;
+	if (path[0] == '/') { // if absolute path, just return it!
+		strcpy(buf, path);
+		return;
+	} else if (fd == -1 || fd == AT_FDCWD) { // no fd given, or AT_FDCWD
+		base_fmt = "/proc/%u/fd/cwd";
+		if (asprintf(&base, base_fmt, pid) < 0) {
+			return;
+		}
+	} else {
+		base_fmt = "/proc/%u/fd/%u";
+		if (asprintf(&base, base_fmt, pid, fd) < 0) {
+			return;
+		}
+	}
+	int n;
+	if ((n = readlink(base, buf, PATH_MAX - 1)) < 0) {
+		free(base);
+		return;
+	}
+	free(base);
+	buf[n] = '\0';
+	// Try to remove trailing slashes
+	if (buf[n - 1] == '/') {
+		buf[n - 1] = '\0';
+	}
+	if (strlen(path) == 0) {
+		return;
+	}
+	strcat(buf, "/");
+	// NOTE (dan) 2025-04-17: we don't care about . and .. inside the path.
+	// Python's os.path.join doesn't clean that up, so to keep behavior
+	// consistent, we just concat
+	if (n + 1 + strlen(path) < PATH_MAX) {
+		strcat(buf, path);
+	}
+	// Try to remove trailing slashes
+	if (buf[strlen(buf) - 1] == '/') {
+		buf[strlen(buf) - 1] = '\0';
+	}
+}
+
+void
+update_rw_sets(enum rw_set_t set_type, char pathbuf[PATH_MAX])
 {
 	if (strncmp(pathbuf, "/tmp/pash_spec", 14) == 0 ||
 	    strncmp(pathbuf, "/dev", 4) == 0) {
@@ -42,10 +89,9 @@ update_rw_sets(struct syscall_event_t *s, char pathbuf[PATH_MAX])
 	}
 	struct bpf_map *read_path_set = skel->maps.read_path_set;
 	struct bpf_map *write_path_set = skel->maps.write_path_set;
-	struct bpf_map *path_set = (s->enter.set_type == READ_SET) ? read_path_set
-	                           : (s->enter.set_type == WRITE_SET)
-	                               ? write_path_set
-	                               : NULL;
+	struct bpf_map *path_set = (set_type == READ_SET)    ? read_path_set
+	                           : (set_type == WRITE_SET) ? write_path_set
+	                                                     : NULL;
 	if (path_set == NULL) { // ignore the event now. it probably isn't a read or
 		                    // write update...
 		return;
@@ -109,8 +155,6 @@ update_rw_sets(struct syscall_event_t *s, char pathbuf[PATH_MAX])
 int
 handle_event(void *ctx, void *data, long unsigned int data_sz)
 {
-	// TODO (dan) 2025-04-17: need to combine return code data with the syscall
-	// args before continuing to handle these things
 	static struct syscall_info_t INFO = {0};
 	struct syscall_event_t *s = data;
 	char pathbuf[PATH_MAX] = {0};
@@ -138,9 +182,33 @@ handle_event(void *ctx, void *data, long unsigned int data_sz)
 		break;
 #endif
 #ifdef __NR_openat
-	case __NR_openat: // TODO: handle this and other syscalls
-		break;
+	case __NR_openat: // TODO: handled individually
 #endif
+#ifdef __NR_open
+	case __NR_open:
+#endif
+	{
+		enum rw_set_t set_type;
+		char ret_pathbuf[PATH_MAX] = {0};
+		construct_path_at(INFO.enter.pid, INFO.enter.fd, INFO.enter.path,
+		                  pathbuf);
+		if (INFO.exit.ret < 0) {
+			set_type = READ_SET;
+			update_rw_sets(set_type, pathbuf);
+		} else if (INFO.enter.flags & O_RDONLY) {
+			set_type = READ_SET;
+			update_rw_sets(set_type, pathbuf);
+			// NOTE: use the return code, which is the fd returned!
+			construct_path_at(INFO.enter.pid, INFO.exit.ret, "", ret_pathbuf);
+			update_rw_sets(set_type, ret_pathbuf);
+		} else {
+			set_type = WRITE_SET;
+			update_rw_sets(set_type, pathbuf);
+			// NOTE: use the return code, which is the fd returned!
+			construct_path_at(INFO.enter.pid, INFO.exit.ret, "", ret_pathbuf);
+			update_rw_sets(set_type, ret_pathbuf);
+		}
+	} break;
 #ifdef __NR_chdir
 	case __NR_chdir:
 		break;
@@ -153,52 +221,14 @@ handle_event(void *ctx, void *data, long unsigned int data_sz)
 	case __NR_symlinkat:
 		break;
 #endif
-#ifdef __NR_open
-	case __NR_open:
-		break;
-#endif
 #ifdef __NR_rename
 	case __NR_rename:
 		break;
 #endif
 	default:
-		// TODO: probably need to differentiate between the syscall types
-		// here too.
-		// TODO: Need to handle AT_FDCWD correctly by reading the process
-		// cwd...
-		// NOTE: here we should have (fd, path), (AT_FDCWD, path) or
-		// just (-1, path). path resolution for relative paths uses CWD by
-		// default I think
-		if (s->enter.fd != -1 && s->enter.fd != AT_FDCWD) {
-			// NOTE: assume procfs links to canon paths
-
-			// char linkpath[sizeof("/proc/%u/fd/%u") + 2 * sizeof(int) * 3]
-			// = 	{0};
-			char *linkpath;
-			if (asprintf(&linkpath, "/proc/%u/fd/%u", s->enter.pid,
-			             s->enter.fd) < 0) {
-				return 0;
-			}
-			int n;
-			if ((n = readlink(linkpath, pathbuf, PATH_MAX - 1)) < 0) {
-				free(linkpath);
-				return 0;
-			}
-			pathbuf[n] = '\0';
-			if (n + 1 + strlen(s->enter.path) < PATH_MAX) {
-				strcat(pathbuf, "/");
-				strcat(pathbuf, s->enter.path);
-			}
-			free(linkpath);
-		} else {
-			// NOTE: Do canon for only AT_FDCWD and just path
-			if (realpath(s->enter.path, pathbuf) == NULL) {
-				fprintf(stderr, "failed to canonicalize path: %s\n",
-				        s->enter.path);
-				return 0;
-			}
-		}
-		update_rw_sets(s, pathbuf);
+		construct_path_at(INFO.enter.pid, INFO.enter.fd, INFO.enter.path,
+		                  pathbuf);
+		update_rw_sets(INFO.enter.set_type, pathbuf);
 		break;
 	}
 	return 0;
