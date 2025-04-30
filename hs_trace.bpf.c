@@ -34,9 +34,9 @@ struct {
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__type(key, pid_t);
-	__type(value, int);
+	__type(value, char[4096]);
 	__uint(max_entries, 1024);
-} pids SEC(".maps");
+} pid_cwd_map SEC(".maps");
 
 SEC("tp_btf/sys_enter")
 
@@ -44,7 +44,7 @@ int
 BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 {
 	pid_t pid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
-	if (bpf_map_lookup_elem(&pids, &pid) == NULL) {
+	if (bpf_map_lookup_elem(&pid_cwd_map, &pid) == NULL) {
 		return 0;
 	}
 
@@ -56,7 +56,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	switch (syscall_id) {
 #ifdef __NR_exit
 	case __NR_exit:
-		if (bpf_map_delete_elem(&pids, &pid) < 0) {
+		if (bpf_map_delete_elem(&pid_cwd_map, &pid) < 0) {
 			bpf_printk("failed to remove pid\n");
 		}
 		return 0;
@@ -76,18 +76,48 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 #endif
 #ifdef __NR_chdir
 	case __NR_chdir:
+		path = (char *)PT_REGS_PARM1_CORE(regs);
+		bpf_map_update_elem(&pid_cwd_map, &pid, path, BPF_ANY);
 		break;
 #endif
 #ifdef __NR_clone
 	case __NR_clone:
+		flags = (long int)PT_REGS_PARM3_CORE(regs);
 		break;
 #endif
 #ifdef __NR_symlinkat
 	case __NR_symlinkat:
+		fd = (int)PT_REGS_PARM2_CORE(regs);
+		path = (char *)PT_REGS_PARM3_CORE(regs);
+		set_type = WRITE_SET;
 		break;
 #endif
+#ifdef __NR_symlink
+	case __NR_symlink:
+#endif
+#ifdef __NR_link
+	case __NR_link:
+#endif
+		path = (char *)PT_REGS_PARM2_CORE(regs);
+		set_type = WRITE_SET;
+		break;
+#ifdef __NR_renameat
+	case __NR_renameat:
+#endif
+#ifdef __NR_renameat2
+	case __NR_renameat2:
+#endif
+		// TODO (dan 2025-04-30): handle rename, which should send two paths
+		// or just handle in userspace...
+		break;
 #ifdef __NR_rename
 	case __NR_rename:
+		break;
+#endif
+#ifdef __NR_inotify_add_watch
+	case __NR_inotify_add_watch:
+		path = (char *)PT_REGS_PARM2_CORE(regs);
+		set_type = READ_SET;
 		break;
 #endif
 #ifdef __NR_execve
@@ -176,11 +206,11 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 #endif
 #ifdef __NR_execveat
 	case __NR_execveat:
+#endif
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		path = (char *)PT_REGS_PARM2_CORE(regs);
 		set_type = READ_SET;
 		break;
-#endif
 #ifdef __NR_linkat
 	case __NR_linkat: /* w_fd_path_set */
 #endif
@@ -267,7 +297,7 @@ int
 BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 {
 	pid_t pid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
-	if (bpf_map_lookup_elem(&pids, &pid) == NULL) {
+	if (bpf_map_lookup_elem(&pid_cwd_map, &pid) == NULL) {
 		return 0;
 	}
 
@@ -290,6 +320,9 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 #ifdef __NR_openat
 	case __NR_openat: /* individually */
 #endif
+#ifdef __NR_open
+	case __NR_open:
+#endif
 #ifdef __NR_chdir
 	case __NR_chdir:
 #endif
@@ -299,11 +332,23 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 #ifdef __NR_symlinkat
 	case __NR_symlinkat:
 #endif
-#ifdef __NR_open
-	case __NR_open:
+#ifdef __NR_symlink
+	case __NR_symlink:
+#endif
+#ifdef __NR_link
+	case __NR_link:
 #endif
 #ifdef __NR_rename
 	case __NR_rename:
+#endif
+#ifdef __NR_renameat
+	case __NR_renameat:
+#endif
+#ifdef __NR_renameat2
+	case __NR_renameat2:
+#endif
+#ifdef __NR_inotify_add_watch
+	case __NR_inotify_add_watch:
 #endif
 #ifdef __NR_execve
 	case __NR_execve: /* r_first_path_set */
