@@ -1,3 +1,4 @@
+#include "vmlinux.h"
 #include "hs_trace.h"
 
 #include <asm/unistd.h>
@@ -76,8 +77,8 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 #endif
 #ifdef __NR_chdir
 	case __NR_chdir:
-		path = (char *)PT_REGS_PARM1_CORE(regs);
-		bpf_map_update_elem(&pid_cwd_map, &pid, path, BPF_ANY);
+		// path = (char *)PT_REGS_PARM1_CORE(regs);
+		// bpf_map_update_elem(&pid_cwd_map, &pid, path, BPF_ANY);
 		break;
 #endif
 #ifdef __NR_clone
@@ -265,17 +266,6 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 
 	bpf_ringbuf_submit(info, 0);
 
-	/*
-	 * NOTE: according to https://docs.kernel.org/bpf/map_queue_stack.html
-	 * with BPF_EXIST, oldest elem will be evicted. We should be good
-	 * because enters and exits should be matched, but in the off chance they
-	 * aren't, this should prevent us from missing a newer event.
-	 */
-	if (bpf_map_push_elem(&syscall_nr_queue, &syscall_id, BPF_EXIST) < 0) {
-		bpf_printk("failed queue push\n");
-		return 0;
-	}
-
 	return 0;
 }
 
@@ -301,19 +291,22 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 		return 0;
 	}
 
-	long syscall_id = -1;
+	long syscall_id = regs->syscallno;
 
-	if (bpf_map_pop_elem(&syscall_nr_queue, &syscall_id) < 0) {
-		/*
-		 * This is okay. since we filter out some syscalls in
-		 * sys_enter, not all sys_exits will be matched.
-		 * so we pass the syscall nr along and if there exists one
-		 * we know we got a syscall we want.
-		 */
-		return 0;
-	}
 
 	switch (syscall_id) {
+#ifdef __NR_clone
+	case __NR_clone: {
+		// char *s;
+		// if ((s = bpf_map_lookup_elem(&pid_cwd_map, &pid)) == NULL) {
+		// 	return 0;
+		// }
+		// if (ret < 0) { // NOTE: only update for successful clones
+		// 	break;
+		// }
+		// bpf_map_update_elem(&pid_cwd_map, &ret, s, BPF_ANY);
+	} break;
+#endif
 #ifdef __NR_exit
 	case __NR_exit:
 #endif
@@ -325,9 +318,6 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 #endif
 #ifdef __NR_chdir
 	case __NR_chdir:
-#endif
-#ifdef __NR_clone
-	case __NR_clone:
 #endif
 #ifdef __NR_symlinkat
 	case __NR_symlinkat:
@@ -459,6 +449,8 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 	default:
 		return 0;
 	}
+
+	bpf_printk("sys_exit called on %ld\n", syscall_id);
 
 	struct syscall_event_t *info =
 		bpf_ringbuf_reserve(&output, sizeof(struct syscall_event_t), 0);

@@ -1,0 +1,12 @@
+[package]
+name = "trace_v3"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libbpf-rs = { version = "0.24.8", features = ["generate-test-files", "libbpf-sys", "vendored"] }
+libbpf-sys = "1.5.0"
+
+[build-dependencies]
+bindgen = "0.71.0"
+libbpf-cargo = "0.24.8"

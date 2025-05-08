@@ -8,10 +8,12 @@
 !*/
 
 !Makefile
-vmlinux.h
-*.skel.h
-
-*.o
+src/bpf/vmlinux.h
+src/bpf/*.skel.rs
 
 tests/*.out
 tests/*.err
+
+# Added by cargo
+
+/target

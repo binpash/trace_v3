@@ -1,10 +1,3 @@
-#ifdef USER
-#include <sys/types.h>
-#include <unistd.h>
-#else
-#include "vmlinux.h"
-#endif
-
 #ifndef _HS_TRACE_H_
 #define _HS_TRACE_H_
 
@@ -13,13 +6,13 @@ struct user_msg_t {
 };
 
 struct file_access_t {
-	pid_t pid;
+	int pid;
 	int fd;
 };
 
 struct unique_file_t {
-	dev_t dev;
-	ino_t ino;
+	int dev;
+	int ino;
 };
 
 enum rw_set_t {
