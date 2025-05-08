@@ -1,5 +1,7 @@
 #include "hs_trace.h"
 
+#include "vmlinux.h"
+
 #include <asm/unistd.h>
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
@@ -77,7 +79,6 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 #ifdef __NR_chdir
 	case __NR_chdir:
 		path = (char *)PT_REGS_PARM1_CORE(regs);
-		bpf_map_update_elem(&pid_cwd_map, &pid, path, BPF_ANY);
 		break;
 #endif
 #ifdef __NR_clone
@@ -261,7 +262,12 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	info->enter.pid = pid;
 	info->enter.fd = fd;
 	info->enter.flags = flags;
-	bpf_probe_read_user_str(&info->enter.path, sizeof(info->enter.path), path);
+	if (bpf_probe_read_user_str(&info->enter.path, sizeof(info->enter.path), path) < 0) {
+		bpf_printk("failed to read user str\n");
+		// NOTE: to avoid issue with verifier when reading str fails.
+		bpf_ringbuf_discard(info, BPF_RB_NO_WAKEUP);
+		return 0;
+	}
 
 	bpf_ringbuf_submit(info, 0);
 
@@ -278,18 +284,6 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 
 	return 0;
 }
-
-struct scratch_data {
-	struct file_access_t access;
-	struct unique_file_t file;
-};
-
-struct {
-	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-	__uint(key_size, 4);
-	__uint(value_size, sizeof(struct scratch_data));
-	__uint(max_entries, 1);
-} scratch SEC(".maps");
 
 SEC("tp_btf/sys_exit")
 

@@ -1,5 +1,4 @@
 #define _GNU_SOURCE
-#define USER
 #include "hs_trace.h"
 
 #include <sys/stat.h>
@@ -13,6 +12,7 @@
 #include <fcntl.h>
 #include <libgen.h>
 #include <limits.h>
+#include <linux/sched.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -211,18 +211,42 @@ handle_event(void *ctx, void *data, long unsigned int data_sz)
 	} break;
 #ifdef __NR_chdir
 	case __NR_chdir:
+
 		break;
 #endif
 #ifdef __NR_clone
 	case __NR_clone:
+		if (INFO.enter.flags & CLONE_FS) {
+		}
 		break;
 #endif
 #ifdef __NR_symlinkat
 	case __NR_symlinkat:
 		break;
 #endif
+#ifdef __NR_symlink
+	case __NR_symlink:
+#endif
+#ifdef __NR_link
+	case __NR_symlink:
+#endif
+		break;
+#ifdef __NR_renameat
+	case __NR_renameat:
+#endif
+#ifdef __NR_renameat2
+	case __NR_renameat2:
+#endif
+		break;
 #ifdef __NR_rename
 	case __NR_rename:
+		break;
+#endif
+#ifdef __NR_inotify_add_watch
+	case __NR_inotify_add_watch:
+		construct_path_at(INFO.enter.pid, INFO.enter.fd, INFO.enter.path,
+		                  pathbuf);
+		update_rw_sets(INFO.enter.set_type, pathbuf);
 		break;
 #endif
 	default:
@@ -350,9 +374,10 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	int val = 1;
-	if (bpf_map__update_elem(skel->maps.pids, &pid, sizeof(pid), &val,
-	                         sizeof(val), BPF_ANY) < 0) {
+	char cwd[PATH_MAX];
+	getcwd(cwd, PATH_MAX);
+	if (bpf_map__update_elem(skel->maps.pid_cwd_map, &pid, sizeof(pid), &cwd,
+	                         sizeof(cwd), BPF_ANY) < 0) {
 		fprintf(stderr, "Failed to update map buffer\n");
 		hs_trace_bpf__destroy(skel);
 		return EXIT_FAILURE;
