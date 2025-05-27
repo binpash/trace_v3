@@ -24,6 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("cargo::rerun-if-changed=src/bpf/hs_trace.bpf.c");
     let arch = env::consts::ARCH;
+    let arch_flag = format!("-D __{}__", arch);
     let target_arch_flag = format!(
         "-D __TARGET_ARCH_{}",
         if arch == "aarch64" {
@@ -43,6 +44,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .clang("clang")
         .clang_args([
             "-D __BPF_TRACING__",
+            &arch_flag,
             &target_arch_flag,
             "-Wall",
             &include_flag,
