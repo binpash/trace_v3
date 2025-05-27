@@ -29,31 +29,40 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_QUEUE);
-	__type(value, long int);
+	__type(value, u64);
 	__uint(max_entries, 1);
 } syscall_nr_queue SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__type(key, pid_t);
+	__type(key, u64);
 	__type(value, char[4096]);
 	__uint(max_entries, 1024);
 } pid_cwd_map SEC(".maps");
+
+enum syscall_event_type {
+	SYS_ENTER0,
+	SYS_ENTER1,
+	SYS_ENTER2,
+	SYS_EXIT
+};
 
 SEC("tp_btf/sys_enter")
 
 int
 BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 {
-	pid_t pid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
+	u64 pid = bpf_get_current_pid_tgid();
 	if (bpf_map_lookup_elem(&pid_cwd_map, &pid) == NULL) {
 		return 0;
 	}
 
 	int fd = -1;
+	int fd2 = -1;
 	char *path = NULL;
+	char *path2 = NULL;
 	int flags = 0;
-	enum rw_set_t set_type = UNKNOWN_SET;
+	enum syscall_event_type event_type;
 
 	switch (syscall_id) {
 #ifdef __NR_exit
@@ -68,57 +77,77 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		path = (char *)PT_REGS_PARM2_CORE(regs);
 		flags = (int)PT_REGS_PARM3_CORE(regs);
+		event_type = SYS_ENTER1;
 		break;
 #endif
 #ifdef __NR_open
 	case __NR_open:
 		path = (char *)PT_REGS_PARM1_CORE(regs);
 		flags = (int)PT_REGS_PARM2_CORE(regs);
+		event_type = SYS_ENTER1;
 		break;
 #endif
 #ifdef __NR_chdir
 	case __NR_chdir:
 		path = (char *)PT_REGS_PARM1_CORE(regs);
+		event_type = SYS_ENTER1;
 		break;
 #endif
 #ifdef __NR_clone
 	case __NR_clone:
-		flags = (long int)PT_REGS_PARM3_CORE(regs);
+		flags = (int)PT_REGS_PARM3_CORE(regs);
+		event_type = SYS_ENTER0;
 		break;
 #endif
 #ifdef __NR_symlinkat
 	case __NR_symlinkat:
 		fd = (int)PT_REGS_PARM2_CORE(regs);
 		path = (char *)PT_REGS_PARM3_CORE(regs);
-		set_type = WRITE_SET;
+		event_type = SYS_ENTER1;
 		break;
 #endif
 #ifdef __NR_symlink
 	case __NR_symlink:
 #endif
+		// NOTE: symlink only incurs a dependency for the symlink file itself
+		path = (char *)PT_REGS_PARM2_CORE(regs);
+		event_type = SYS_ENTER1;
+		break;
 #ifdef __NR_link
 	case __NR_link:
 #endif
-		path = (char *)PT_REGS_PARM2_CORE(regs);
-		set_type = WRITE_SET;
+		// NOTE: link incurs a dependency on both the original path and the new
+		// path for the inode
+		path = (char *)PT_REGS_PARM1_CORE(regs);
+		path2 = (char *)PT_REGS_PARM2_CORE(regs);
+		event_type = SYS_ENTER2;
 		break;
-#ifdef __NR_renameat
-	case __NR_renameat:
-#endif
 #ifdef __NR_renameat2
 	case __NR_renameat2:
 #endif
-		// TODO (dan 2025-04-30): handle rename, which should send two paths
-		// or just handle in userspace...
+		// TODO (dan 2025-05-27): flags for renameat2 might need special
+		// handling
+		flags = (int)PT_REGS_PARM5_CORE(regs);
+#ifdef __NR_renameat
+	case __NR_renameat:
+#endif
+		fd = (int)PT_REGS_PARM1_CORE(regs);
+		fd2 = (int)PT_REGS_PARM3_CORE(regs);
+		path = (char *)PT_REGS_PARM2_CORE(regs);
+		path2 = (char *)PT_REGS_PARM4_CORE(regs);
+		event_type = SYS_ENTER2;
 		break;
 #ifdef __NR_rename
 	case __NR_rename:
+		path = (char *)PT_REGS_PARM1_CORE(regs);
+		path2 = (char *)PT_REGS_PARM2_CORE(regs);
+		event_type = SYS_ENTER2;
 		break;
 #endif
 #ifdef __NR_inotify_add_watch
 	case __NR_inotify_add_watch:
 		path = (char *)PT_REGS_PARM2_CORE(regs);
-		set_type = READ_SET;
+		event_type = SYS_ENTER0;
 		break;
 #endif
 #ifdef __NR_execve
@@ -146,7 +175,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	case __NR_readlink:
 #endif
 		path = (char *)PT_REGS_PARM1_CORE(regs);
-		set_type = READ_SET;
+		event_type = SYS_ENTER1;
 		break;
 #ifdef __NR_truncate
 	case __NR_truncate: /* w_first_path_set */
@@ -185,7 +214,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	case __NR_unlink:
 #endif
 		path = (char *)PT_REGS_PARM1_CORE(regs);
-		set_type = WRITE_SET;
+		event_type = SYS_ENTER1;
 		break;
 #ifdef __NR_newfstatat
 	case __NR_newfstatat: /* r_fd_path_set */
@@ -210,7 +239,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 #endif
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		path = (char *)PT_REGS_PARM2_CORE(regs);
-		set_type = READ_SET;
+		event_type = SYS_ENTER1;
 		break;
 #ifdef __NR_linkat
 	case __NR_linkat: /* w_fd_path_set */
@@ -238,7 +267,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 #endif
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		path = (char *)PT_REGS_PARM2_CORE(regs);
-		set_type = WRITE_SET;
+		event_type = SYS_ENTER1;
 		break;
 	default:
 		return 0;
@@ -246,30 +275,43 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 
 	bpf_printk("sys_enter called on %ld\n", syscall_id);
 
-	struct syscall_event_t *info =
-		bpf_ringbuf_reserve(&output, sizeof(struct syscall_event_t), 0);
-	if (info == NULL) {
-		return 0;
+	struct sys_enter_info0_t *enter0;
+	struct sys_enter_info1_t *enter1;
+	struct sys_enter_info2_t *enter2;
+	if (event_type == SYS_ENTER0) {
+		if ((enter0 = bpf_ringbuf_reserve(
+				 &output, sizeof(struct sys_enter_info0_t), 0)) == NULL) {
+			return 0;
+		}
+		enter0->pid = pid;
+		enter0->syscall_nr = syscall_id;
+		enter0->flags = flags;
+		bpf_ringbuf_submit(enter0, 0);
+	} else if (event_type == SYS_ENTER1) {
+		if ((enter1 = bpf_ringbuf_reserve(
+				 &output, sizeof(struct sys_enter_info1_t), 0)) == NULL) {
+			return 0;
+		}
+		enter1->pid = pid;
+		enter1->syscall_nr = syscall_id;
+		enter1->flags = flags;
+		enter1->fd = fd;
+		bpf_probe_read_user_str(&enter1->path, sizeof(enter1->path), path);
+		bpf_ringbuf_submit(enter1, 0);
+	} else if (event_type == SYS_ENTER2) {
+		if ((enter2 = bpf_ringbuf_reserve(
+				 &output, sizeof(struct sys_enter_info2_t), 0)) == NULL) {
+			return 0;
+		}
+		enter2->pid = pid;
+		enter2->syscall_nr = syscall_id;
+		enter2->flags = flags;
+		enter2->fd = fd;
+		enter2->fd2 = fd2;
+		bpf_probe_read_user_str(&enter2->path, sizeof(enter2->path), path);
+		bpf_probe_read_user_str(&enter2->path2, sizeof(enter2->path2), path2);
+		bpf_ringbuf_submit(enter2, 0);
 	}
-	info->type = SYS_ENTER;
-	info->enter.syscall_nr = syscall_id;
-	info->enter.arg1 = PT_REGS_PARM1_CORE(regs);
-	info->enter.arg2 = PT_REGS_PARM2_CORE(regs);
-	info->enter.arg3 = PT_REGS_PARM3_CORE(regs);
-	info->enter.arg4 = PT_REGS_PARM4_CORE(regs);
-	info->enter.arg5 = PT_REGS_PARM5_CORE(regs);
-	info->enter.set_type = set_type;
-	info->enter.pid = pid;
-	info->enter.fd = fd;
-	info->enter.flags = flags;
-	if (bpf_probe_read_user_str(&info->enter.path, sizeof(info->enter.path), path) < 0) {
-		bpf_printk("failed to read user str\n");
-		// NOTE: to avoid issue with verifier when reading str fails.
-		bpf_ringbuf_discard(info, BPF_RB_NO_WAKEUP);
-		return 0;
-	}
-
-	bpf_ringbuf_submit(info, 0);
 
 	/*
 	 * NOTE: according to https://docs.kernel.org/bpf/map_queue_stack.html
@@ -290,24 +332,22 @@ SEC("tp_btf/sys_exit")
 int
 BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 {
-	pid_t pid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
+	u64 pid = bpf_get_current_pid_tgid();
 	if (bpf_map_lookup_elem(&pid_cwd_map, &pid) == NULL) {
 		return 0;
 	}
 
-	long syscall_id = -1;
-
-	if (bpf_map_pop_elem(&syscall_nr_queue, &syscall_id) < 0) {
-		/*
-		 * This is okay. since we filter out some syscalls in
-		 * sys_enter, not all sys_exits will be matched.
-		 * so we pass the syscall nr along and if there exists one
-		 * we know we got a syscall we want.
-		 */
-		return 0;
-	}
+	// TODO (dan 2025-05-27): figure out if these macros are correct!
+#ifdef __aarch64__
+	long syscall_id = regs->syscallno;
+#elifdef __x86_64__
+	long syscall_id = regs->orig_ax;
+#endif
 
 	switch (syscall_id) {
+#ifdef __NR_clone
+	case __NR_clone:
+#endif
 #ifdef __NR_exit
 	case __NR_exit:
 #endif
@@ -319,9 +359,6 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 #endif
 #ifdef __NR_chdir
 	case __NR_chdir:
-#endif
-#ifdef __NR_clone
-	case __NR_clone:
 #endif
 #ifdef __NR_symlinkat
 	case __NR_symlinkat:
@@ -454,14 +491,16 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 		return 0;
 	}
 
-	struct syscall_event_t *info =
-		bpf_ringbuf_reserve(&output, sizeof(struct syscall_event_t), 0);
-	if (info == NULL) {
+	bpf_printk("sys_exit called on %ld\n", syscall_id);
+
+	struct sys_exit_info_t *exit;
+	if ((exit = bpf_ringbuf_reserve(&output, sizeof(struct sys_exit_info_t),
+	                                0)) == NULL) {
 		return 0;
 	}
-	info->type = SYS_EXIT;
-	info->exit.ret = ret;
-	bpf_ringbuf_submit(info, 0);
+	exit->pid = pid;
+	exit->ret = ret;
+	bpf_ringbuf_submit(exit, 0);
 
 	return 0;
 }
