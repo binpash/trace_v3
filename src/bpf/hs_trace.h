@@ -1,69 +1,32 @@
 #ifndef _HS_TRACE_H_
 #define _HS_TRACE_H_
 
-struct user_msg_t {
-	char message[12];
-};
-
-struct file_access_t {
-	int pid;
-	int fd;
-};
-
-struct unique_file_t {
-	int dev;
-	int ino;
-};
-
-enum rw_set_t {
-	READ_SET,
-	WRITE_SET,
-	UNKNOWN_SET,
-};
-
-struct sys_enter_info_t {
+struct sys_enter_info0_t {
 	long int syscall_nr;
-	long int arg1;
-	long int arg2;
-	long int arg3;
-	long int arg4;
-	long int arg5;
-	enum rw_set_t set_type;
 	int pid;
+	int flags; // for special handling: open*, clone, linkat, etc.
+};
+
+struct sys_enter_info1_t {
+	long int syscall_nr;
+	int pid;
+	int flags; // for special handling: open*, clone, linkat, etc.
 	int fd; // for -at syscalls: could be AT_FDCWD
-	int flags; // for open* and clone
 	char path[4096];
+};
+
+struct sys_enter_info2_t {
+	long int syscall_nr;
+	int pid;
+	int flags; // for special handling: open*, clone, linkat, etc.
+	int fd; // for -at syscalls: could be AT_FDCWD
+	int fd2; // for renameat2 and linkat
+	char path[4096];
+	char path2[4096];
 };
 
 struct sys_exit_info_t {
 	long int ret;
-};
-
-enum syscall_event_type {
-	SYS_ENTER,
-	SYS_EXIT
-};
-
-struct syscall_event_t {
-	enum syscall_event_type type;
-
-	union {
-		struct sys_enter_info_t enter;
-		struct sys_exit_info_t exit;
-	};
-};
-
-struct syscall_info_t {
-	struct sys_enter_info_t enter;
-	struct sys_exit_info_t exit;
-};
-
-struct data_t {
-	int pid;
-	int uid;
-	char command[16];
-	char message[12];
-	char path[16];
 };
 
 #endif /* _HS_TRACE_H_ */
