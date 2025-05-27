@@ -22,6 +22,7 @@ $(TARGET): $(USER_C) $(USER_SKEL) $(COMMON_H)
 	    -target bpf \
 		-D __BPF_TRACING__ \
 		-D __TARGET_ARCH_$(ARCH) \
+		-D __$(shell uname -m)__ \
 		-Wall \
 		-I/usr/include/$(shell uname -m)-linux-gnu \
 		-O2 -g -o $@ -c $<

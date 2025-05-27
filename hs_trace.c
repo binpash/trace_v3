@@ -80,6 +80,12 @@ construct_path_at(pid_t pid, int fd, const char *restrict path,
 	}
 }
 
+enum rw_set_t {
+	READ_SET,
+	WRITE_SET,
+	UNKNOWN_SET
+};
+
 void
 update_rw_sets(enum rw_set_t set_type, char pathbuf[PATH_MAX])
 {
@@ -152,109 +158,134 @@ update_rw_sets(enum rw_set_t set_type, char pathbuf[PATH_MAX])
 	}
 }
 
+struct sys_enter_info_t {
+	enum {
+		ENTER0,
+		ENTER1,
+		ENTER2
+	} type;
+
+	union {
+		struct sys_enter_info0_t e0;
+		struct sys_enter_info1_t e1;
+		struct sys_enter_info2_t e2;
+	};
+};
+
 int
 handle_event(void *ctx, void *data, long unsigned int data_sz)
 {
-	static struct syscall_info_t INFO = {0};
-	struct syscall_event_t *s = data;
-	char pathbuf[PATH_MAX] = {0};
-	if (s->type == SYS_ENTER) {
-		INFO.enter = s->enter;
-		// early return from the enter call so we can gather the exit code info
-		// before doing work
-		return 0;
-	} else {
-		INFO.exit = s->exit;
-	}
-	printf("%ld(%p, %p, %p, %p, %p) ", INFO.enter.syscall_nr,
-	       (void *)INFO.enter.arg1, (void *)INFO.enter.arg2,
-	       (void *)INFO.enter.arg3, (void *)INFO.enter.arg4,
-	       (void *)INFO.enter.arg5);
-	printf("path from syscall was \"%s\"\n", INFO.enter.path);
-	if (INFO.enter.fd == AT_FDCWD) {
-		printf("AT_FDCWD\n");
-	}
-	// Return code of syscall
-	printf("-> %ld\n", INFO.exit.ret);
-	switch (INFO.enter.syscall_nr) {
-#ifdef __NR_exit
-	case __NR_exit:
-		break;
-#endif
-#ifdef __NR_openat
-	case __NR_openat: // TODO: handled individually
-#endif
-#ifdef __NR_open
-	case __NR_open:
-#endif
-	{
-		enum rw_set_t set_type;
-		char ret_pathbuf[PATH_MAX] = {0};
-		construct_path_at(INFO.enter.pid, INFO.enter.fd, INFO.enter.path,
-		                  pathbuf);
-		if (INFO.exit.ret < 0) {
-			set_type = READ_SET;
-			update_rw_sets(set_type, pathbuf);
-		} else if ((INFO.enter.flags & 0b11) == O_RDONLY) {
-			set_type = READ_SET;
-			update_rw_sets(set_type, pathbuf);
-			// NOTE: use the return code, which is the fd returned!
-			construct_path_at(INFO.enter.pid, INFO.exit.ret, "", ret_pathbuf);
-			update_rw_sets(set_type, ret_pathbuf);
-		} else {
-			set_type = WRITE_SET;
-			update_rw_sets(set_type, pathbuf);
-			// NOTE: use the return code, which is the fd returned!
-			construct_path_at(INFO.enter.pid, INFO.exit.ret, "", ret_pathbuf);
-			update_rw_sets(set_type, ret_pathbuf);
-		}
-	} break;
-#ifdef __NR_chdir
-	case __NR_chdir:
+	printf("got event: %p of size %ld\n", data, data_sz);
 
-		break;
-#endif
-#ifdef __NR_clone
-	case __NR_clone:
-		if (INFO.enter.flags & CLONE_FS) {
-		}
-		break;
-#endif
-#ifdef __NR_symlinkat
-	case __NR_symlinkat:
-		break;
-#endif
-#ifdef __NR_symlink
-	case __NR_symlink:
-#endif
-#ifdef __NR_link
-	case __NR_symlink:
-#endif
-		break;
-#ifdef __NR_renameat
-	case __NR_renameat:
-#endif
-#ifdef __NR_renameat2
-	case __NR_renameat2:
-#endif
-		break;
-#ifdef __NR_rename
-	case __NR_rename:
-		break;
-#endif
-#ifdef __NR_inotify_add_watch
-	case __NR_inotify_add_watch:
-		construct_path_at(INFO.enter.pid, INFO.enter.fd, INFO.enter.path,
-		                  pathbuf);
-		update_rw_sets(INFO.enter.set_type, pathbuf);
-		break;
-#endif
-	default:
-		construct_path_at(INFO.enter.pid, INFO.enter.fd, INFO.enter.path,
-		                  pathbuf);
-		update_rw_sets(INFO.enter.set_type, pathbuf);
-		break;
+	static struct sys_enter_info_t enter = {0};
+	static struct sys_exit_info_t exit = {0};
+	// struct syscall_event_t *s = data;
+	// char pathbuf[PATH_MAX] = {0};
+	if (data_sz == sizeof(struct sys_exit_info_t)) {
+		exit.pid = ((struct sys_exit_info_t *)data)->pid;
+		exit.ret = ((struct sys_exit_info_t *)data)->ret;
+		printf("for (%d, %d): -> %ld\n", (int)(exit.pid >> 32),
+		       (int)(exit.pid & 0xFFFFFFFF), exit.ret);
+	} else if (data_sz == sizeof(struct sys_enter_info0_t)) {
+		enter.type = ENTER0;
+		enter.e0 = *(struct sys_enter_info0_t *)data;
+		printf("for (%d, %d): %ld(flags=%d)\n", (int)(enter.e0.pid >> 32),
+		       (int)(enter.e0.pid & 0xFFFFFFFF), enter.e0.syscall_nr,
+		       enter.e0.flags);
+	} else if (data_sz == sizeof(struct sys_enter_info1_t)) {
+		enter.type = ENTER1;
+		enter.e1 = *(struct sys_enter_info1_t *)data;
+		printf("for (%d, %d): %ld(fd=%d,path=%s,flags=%d)\n",
+		       (int)(enter.e1.pid >> 32), (int)(enter.e1.pid & 0xFFFFFFFF),
+		       enter.e1.syscall_nr, enter.e1.fd, enter.e1.path, enter.e1.flags);
+	} else if (data_sz == sizeof(struct sys_enter_info2_t)) {
+		enter.type = ENTER2;
+		enter.e2 = *(struct sys_enter_info2_t *)data;
+		printf("for (%d, %d): %ld(fd=%d,path=%s,fd2=%d,path2=%s,flags=%d)\n",
+		       (int)(enter.e2.pid >> 32), (int)(enter.e2.pid & 0xFFFFFFFF),
+		       enter.e2.syscall_nr, enter.e2.fd, enter.e2.path, enter.e2.fd2,
+		       enter.e2.path2, enter.e2.flags);
 	}
+
+// 	switch (INFO.enter.syscall_nr) {
+// #ifdef __NR_exit
+// 	case __NR_exit:
+// 		break;
+// #endif
+// #ifdef __NR_openat
+// 	case __NR_openat: // TODO: handled individually
+// #endif
+// #ifdef __NR_open
+// 	case __NR_open:
+// #endif
+// 	{
+// 		enum rw_set_t set_type;
+// 		char ret_pathbuf[PATH_MAX] = {0};
+// 		construct_path_at(INFO.enter.pid, INFO.enter.fd, INFO.enter.path,
+// 		                  pathbuf);
+// 		if (INFO.exit.ret < 0) {
+// 			set_type = READ_SET;
+// 			update_rw_sets(set_type, pathbuf);
+// 		} else if ((INFO.enter.flags & 0b11) == O_RDONLY) {
+// 			set_type = READ_SET;
+// 			update_rw_sets(set_type, pathbuf);
+// 			// NOTE: use the return code, which is the fd returned!
+// 			construct_path_at(INFO.enter.pid, INFO.exit.ret, "", ret_pathbuf);
+// 			update_rw_sets(set_type, ret_pathbuf);
+// 		} else {
+// 			set_type = WRITE_SET;
+// 			update_rw_sets(set_type, pathbuf);
+// 			// NOTE: use the return code, which is the fd returned!
+// 			construct_path_at(INFO.enter.pid, INFO.exit.ret, "", ret_pathbuf);
+// 			update_rw_sets(set_type, ret_pathbuf);
+// 		}
+// 	} break;
+// #ifdef __NR_chdir
+// 	case __NR_chdir:
+//
+// 		break;
+// #endif
+// #ifdef __NR_clone
+// 	case __NR_clone:
+// 		if (INFO.enter.flags & CLONE_FS) {
+// 		}
+// 		break;
+// #endif
+// #ifdef __NR_symlinkat
+// 	case __NR_symlinkat:
+// 		break;
+// #endif
+// #ifdef __NR_symlink
+// 	case __NR_symlink:
+// #endif
+// #ifdef __NR_link
+// 	case __NR_symlink:
+// #endif
+// 		break;
+// #ifdef __NR_renameat
+// 	case __NR_renameat:
+// #endif
+// #ifdef __NR_renameat2
+// 	case __NR_renameat2:
+// #endif
+// 		break;
+// #ifdef __NR_rename
+// 	case __NR_rename:
+// 		break;
+// #endif
+// #ifdef __NR_inotify_add_watch
+// 	case __NR_inotify_add_watch:
+// 		construct_path_at(INFO.enter.pid, INFO.enter.fd, INFO.enter.path,
+// 		                  pathbuf);
+// 		update_rw_sets(INFO.enter.set_type, pathbuf);
+// 		break;
+// #endif
+// 	default:
+// 		construct_path_at(INFO.enter.pid, INFO.enter.fd, INFO.enter.path,
+// 		                  pathbuf);
+// 		update_rw_sets(INFO.enter.set_type, pathbuf);
+// 		break;
+// 	}
 	return 0;
 }
 
@@ -262,46 +293,47 @@ void
 lost_event(void *ctx, int cpu, long long unsigned int data_sz)
 {
 	printf("lost event\n");
+	return;
 }
 
-void
-dump_path_set(struct bpf_map *path_set)
-{
-	struct unique_file_t prev_key = {0};
-	struct unique_file_t key = {0};
-	int err = bpf_map__get_next_key(path_set, NULL, &key,
-	                                sizeof(struct unique_file_t));
-	if (err == -ENOENT) {
-		printf("Empty\n");
-		return;
-	}
-	while (true) {
-		if (err == -ENOENT) {
-			break;
-		} else if (err < 0) {
-			printf("err getting next key\n");
-			return;
-		}
-		char buf[PATH_MAX] = {0};
-		if (bpf_map__lookup_elem(path_set, &key, sizeof(struct unique_file_t),
-		                         &buf, PATH_MAX, BPF_ANY) < 0) {
-			return;
-		}
-		printf("%s\n", buf);
-		prev_key = key;
-		err = bpf_map__get_next_key(path_set, &prev_key, &key,
-		                            sizeof(struct unique_file_t));
-	}
-}
+// void
+// dump_path_set(struct bpf_map *path_set)
+// {
+// 	struct unique_file_t prev_key = {0};
+// 	struct unique_file_t key = {0};
+// 	int err = bpf_map__get_next_key(path_set, NULL, &key,
+// 	                                sizeof(struct unique_file_t));
+// 	if (err == -ENOENT) {
+// 		printf("Empty\n");
+// 		return;
+// 	}
+// 	while (true) {
+// 		if (err == -ENOENT) {
+// 			break;
+// 		} else if (err < 0) {
+// 			printf("err getting next key\n");
+// 			return;
+// 		}
+// 		char buf[PATH_MAX] = {0};
+// 		if (bpf_map__lookup_elem(path_set, &key, sizeof(struct unique_file_t),
+// 		                         &buf, PATH_MAX, BPF_ANY) < 0) {
+// 			return;
+// 		}
+// 		printf("%s\n", buf);
+// 		prev_key = key;
+// 		err = bpf_map__get_next_key(path_set, &prev_key, &key,
+// 		                            sizeof(struct unique_file_t));
+// 	}
+// }
 
-void
-dump_path_sets()
-{
-	printf("Read set:\n");
-	dump_path_set(skel->maps.read_path_set);
-	printf("Write set:\n");
-	dump_path_set(skel->maps.write_path_set);
-}
+// void
+// dump_path_sets()
+// {
+// 	printf("Read set:\n");
+// 	dump_path_set(skel->maps.read_path_set);
+// 	printf("Write set:\n");
+// 	dump_path_set(skel->maps.write_path_set);
+// }
 
 void
 sigchld_handler(int signum)
@@ -331,7 +363,9 @@ main(int argc, char *argv[])
 		exit(1);
 	}
 
-	int pid, devnull;
+	int devnull;
+	int pid;
+	long int pid_tgid;
 	switch (pid = fork()) {
 	case -1:
 		fprintf(stderr, "Failed fork\n");
@@ -374,10 +408,14 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
+	pid_tgid = pid;
+	pid_tgid |= pid_tgid << 32;
+
 	char cwd[PATH_MAX];
 	getcwd(cwd, PATH_MAX);
-	if (bpf_map__update_elem(skel->maps.pid_cwd_map, &pid, sizeof(pid), &cwd,
-	                         sizeof(cwd), BPF_ANY) < 0) {
+	if (bpf_map__update_elem(skel->maps.pid_cwd_map, &pid_tgid,
+	                         sizeof(pid_tgid), &cwd, sizeof(cwd),
+	                         BPF_ANY) < 0) {
 		fprintf(stderr, "Failed to update map buffer\n");
 		hs_trace_bpf__destroy(skel);
 		return EXIT_FAILURE;
@@ -413,7 +451,7 @@ main(int argc, char *argv[])
 		fprintf(stderr, "wait: %s\n", strerror(errno));
 	}
 
-	dump_path_sets();
+	// dump_path_sets();
 
 	ring_buffer__free(rb);
 	hs_trace_bpf__destroy(skel);
