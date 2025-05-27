@@ -1,6 +1,11 @@
 #ifndef _HS_TRACE_H_
 #define _HS_TRACE_H_
 
+struct unique_file_t {
+	int dev;
+	int ino;
+};
+
 struct sys_enter_info0_t {
 	long int pid;
 	long int syscall_nr;
