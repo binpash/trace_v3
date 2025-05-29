@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::mem::MaybeUninit;
 use std::os::unix::process::CommandExt;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 // use clap::Parser;
@@ -28,17 +28,14 @@ fn handle_event(data: &[u8]) -> i32 {
 }
 
 fn main() -> Result<()> {
-    // let opts = Command::parse();
-
-    // let fork = safe_fork()?;
-    // if fork == Fork::Child {
-
-    let args = std::env::args();
-
+    let mut args = std::env::args();
+    for arg in std::env::args() {
+        println!("{arg}");
+    }
     // TODO (dan 2025-05-29): Decide whether or not we want to redirect the fd's to /dev/null
-    let child;
+    let mut child;
     unsafe {
-        child = Command::new("/bin/sh")
+        child = Command::new(args.nth(1).unwrap())
             .args(args.skip(1))
             .pre_exec(|| {
                 let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
@@ -59,6 +56,7 @@ fn main() -> Result<()> {
         .into_os_string()
         .into_string()
         .unwrap();
+    // NOTE: map for userspace.
     let mut pid_cwd_map = HashMap::<u64, String>::new();
     pid_cwd_map.insert(pid_tgid, cwd.clone());
 
@@ -74,6 +72,9 @@ fn main() -> Result<()> {
     let mut skel = open_skel.load()?;
     skel.attach()?;
 
+    println!("attached skel");
+
+    // TODO: check if this should be little endian!
     let pid_buf = &pid_tgid.to_le_bytes();
     let mut cwd_bytes = cwd.into_bytes();
     cwd_bytes.resize(4096, 0);
@@ -83,12 +84,15 @@ fn main() -> Result<()> {
         .pid_cwd_map
         .update(pid_buf, cwd_buf, MapFlags::ANY)?;
 
+    println!("updated map");
+
     let mut rb_builder = RingBufferBuilder::new();
     rb_builder.add(&skel.maps.output, handle_event)?;
     let rb = rb_builder.build()?;
 
+    println!("let child start");
     unsafe {
-        libc::kill(pid as i32, libc::SIGCONT);
+        libc::kill(pid as i32, libc::SIGTERM);
     }
 
     loop {
@@ -96,5 +100,11 @@ fn main() -> Result<()> {
             Ok(()) => {}
             Err(_) => {}
         }
+        // TODO (dan 2025-05-29): loop while waiting for a signal instead of running all these system calls every iteration.
+        match child.try_wait()? {
+            None => continue,
+            Some(_) => break,
+        };
     }
+    Ok(())
 }
