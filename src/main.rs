@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::mem::MaybeUninit;
 use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 
 // use clap::Parser;
@@ -27,29 +27,50 @@ fn handle_event(data: &[u8]) -> i32 {
     return data.len() as i32;
 }
 
+use std::io::{Error, ErrorKind};
+#[derive(PartialEq)]
+enum Fork {
+    Child,
+    Parent(i32),
+}
+
+fn safe_fork() -> Result<Fork, std::io::Error> {
+    let pid;
+    unsafe {
+        pid = libc::fork();
+    }
+    if pid == 0 {
+        Ok(Fork::Child)
+    } else if pid > 0 {
+        Ok(Fork::Parent(pid))
+    } else {
+        Err(Error::new(ErrorKind::Other, "couldn't fork"))
+    }
+}
+
 fn main() -> Result<()> {
     let mut args = std::env::args();
     for arg in std::env::args() {
         println!("{arg}");
     }
     // TODO (dan 2025-05-29): Decide whether or not we want to redirect the fd's to /dev/null
-    let mut child;
-    unsafe {
-        child = Command::new(args.nth(1).unwrap())
-            .args(args.skip(1))
-            .pre_exec(|| {
-                let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
-                libc::dup2(devnull, libc::STDOUT_FILENO);
-                libc::dup2(devnull, libc::STDERR_FILENO);
+    let forked = safe_fork()?;
 
-                libc::pause();
+    let pid;
 
-                Ok(())
-            })
-            .spawn()?;
+    match forked {
+        Fork::Child => unsafe {
+            let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
+            libc::dup2(devnull, libc::STDOUT_FILENO);
+            libc::dup2(devnull, libc::STDERR_FILENO);
+
+            libc::pause();
+
+            Command::new(args.nth(1).unwrap()).args(args.skip(1)).exec();
+        },
+        Fork::Parent(p) => pid = p,
     }
 
-    let pid = child.id();
     let pid_tgid = (pid as u64) << 32 | pid as u64;
 
     let cwd = std::env::current_dir()?
@@ -100,11 +121,6 @@ fn main() -> Result<()> {
             Ok(()) => {}
             Err(_) => {}
         }
-        // TODO (dan 2025-05-29): loop while waiting for a signal instead of running all these system calls every iteration.
-        match child.try_wait()? {
-            None => continue,
-            Some(_) => break,
-        };
     }
     Ok(())
 }
