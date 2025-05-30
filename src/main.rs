@@ -1,8 +1,15 @@
 use anyhow::Result;
+use libc::{
+    O_WRONLY, SA_NOCLDSTOP, SA_RESTART, SIG_BLOCK, SIGCHLD, SIGUSR1, STDERR_FILENO, STDOUT_FILENO,
+    c_int, dup2, kill, open, sigaction, sigaddset, sigemptyset, sighandler_t, sigprocmask,
+    sigset_t, sigwait, waitpid,
+};
 use std::collections::HashMap;
-use std::mem::MaybeUninit;
+use std::io::{Error, ErrorKind};
+use std::mem::{MaybeUninit, size_of, transmute, zeroed};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
+use std::ptr;
 use std::time::Duration;
 
 // use clap::Parser;
@@ -21,54 +28,127 @@ mod hs_trace {
 
 #[allow(clippy::wildcard_imports)]
 use hs_trace::*;
+use trace_v3::*;
 
 fn handle_event(data: &[u8]) -> i32 {
-    println!("Got event");
-    return data.len() as i32;
+    println!("Got event of length {}", data.len());
+    if data.len() == size_of::<sys_enter_info0_t>() {
+        let mut arr: [u8; 24] = [0; 24];
+        arr[..data.len()].copy_from_slice(data);
+        let enter0;
+        unsafe {
+            enter0 = transmute::<[u8; 24], sys_enter_info0_t>(arr);
+        }
+        println!(
+            "for ({}, {}) {}(flags={})",
+            enter0.pid >> 32,
+            enter0.pid & 0xFFFFFFFF,
+            enter0.syscall_nr,
+            enter0.flags
+        );
+    }
+    if data.len() == size_of::<sys_enter_info1_t>() {
+        let mut arr: [u8; 4120] = [0; 4120];
+        arr[..data.len()].copy_from_slice(data);
+        let enter1;
+        unsafe {
+            enter1 = transmute::<[u8; 4120], sys_enter_info1_t>(arr);
+        }
+        println!(
+            "for ({}, {}) {}(fd={},path={},flags={})",
+            enter1.pid >> 32,
+            enter1.pid & 0xFFFFFFFF,
+            enter1.syscall_nr,
+            enter1.fd,
+            String::from_utf8(enter1.path[..].to_vec()).unwrap(),
+            enter1.flags
+        );
+    }
+    if data.len() == size_of::<sys_enter_info2_t>() {
+        let mut arr: [u8; 8224] = [0; 8224];
+        arr[..data.len()].copy_from_slice(data);
+        let enter2;
+        unsafe {
+            enter2 = transmute::<[u8; 8224], sys_enter_info2_t>(arr);
+        }
+        println!(
+            "for ({}, {}) {}(fd={},path={},fd2={},path2={},flags={})",
+            enter2.pid >> 32,
+            enter2.pid & 0xFFFFFFFF,
+            enter2.syscall_nr,
+            enter2.fd,
+            String::from_utf8(enter2.path[..].to_vec()).unwrap(),
+            enter2.fd2,
+            String::from_utf8(enter2.path2[..].to_vec()).unwrap(),
+            enter2.flags
+        );
+    }
+    if data.len() == size_of::<sys_exit_info_t>() {
+        let mut arr: [u8; 16] = [0; 16];
+        arr[..data.len()].copy_from_slice(data);
+        let exit;
+        unsafe {
+            exit = transmute::<[u8; 16], sys_exit_info_t>(arr);
+        }
+        println!(
+            "for ({}, {}) -> {}",
+            exit.pid >> 32,
+            exit.pid & 0xFFFFFFFF,
+            exit.ret
+        );
+    }
+    return 0;
 }
 
-use std::io::{Error, ErrorKind};
-#[derive(PartialEq)]
-enum Fork {
-    Child,
-    Parent(i32),
-}
+use std::sync::atomic::{AtomicBool, Ordering};
+static RUNNING: AtomicBool = AtomicBool::new(true);
 
-fn safe_fork() -> Result<Fork, std::io::Error> {
-    let pid;
-    unsafe {
-        pid = libc::fork();
-    }
-    if pid == 0 {
-        Ok(Fork::Child)
-    } else if pid > 0 {
-        Ok(Fork::Parent(pid))
-    } else {
-        Err(Error::new(ErrorKind::Other, "couldn't fork"))
-    }
+extern "C" fn sigchld_handler(_sig: i32) {
+    RUNNING.store(false, Ordering::Relaxed);
 }
 
 fn main() -> Result<()> {
     let mut args = std::env::args();
-    for arg in std::env::args() {
-        println!("{arg}");
+
+    unsafe {
+        let mut sa: sigaction = zeroed();
+        sa.sa_sigaction = sigchld_handler as sighandler_t;
+        sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+        sigemptyset(&mut sa.sa_mask);
+
+        if sigaction(SIGCHLD, &sa, ptr::null_mut()) == -1 {
+            Err(Error::new(
+                ErrorKind::Other,
+                "couldn't register sigchld handler",
+            ))?;
+        }
     }
-    // TODO (dan 2025-05-29): Decide whether or not we want to redirect the fd's to /dev/null
-    let forked = safe_fork()?;
 
     let pid;
+    unsafe {
+        pid = libc::fork();
+    }
+    if pid < 0 {
+        Err(Error::new(ErrorKind::Other, "couldn't fork"))?;
+    }
+    if pid == 0 {
+        unsafe {
+            // TODO (dan 2025-05-29): Decide whether or not we want to redirect the fd's to /dev/null
+            let devnull = open(c"/dev/null".as_ptr(), O_WRONLY);
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
 
-    match forked {
-        Fork::Child => unsafe {
-            let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
-            libc::dup2(devnull, libc::STDOUT_FILENO);
-            libc::dup2(devnull, libc::STDERR_FILENO);
+            let mut set: sigset_t = zeroed();
+            sigemptyset(&mut set);
+            sigaddset(&mut set, SIGUSR1);
+            sigprocmask(SIG_BLOCK, &mut set, ptr::null_mut());
 
-            libc::pause();
-
-            Command::new(args.nth(1).unwrap()).args(args.skip(1)).exec();
-        },
-        Fork::Parent(p) => pid = p,
+            let mut sig = zeroed();
+            if sigwait(&mut set, &mut sig) != 0 {
+                Err(Error::new(ErrorKind::Other, "couldn't sigwait"))?;
+            }
+            let _ = Command::new(args.nth(1).unwrap()).args(args.skip(1)).exec();
+        }
     }
 
     let pid_tgid = (pid as u64) << 32 | pid as u64;
@@ -81,9 +161,9 @@ fn main() -> Result<()> {
     let mut pid_cwd_map = HashMap::<u64, String>::new();
     pid_cwd_map.insert(pid_tgid, cwd.clone());
 
-    let mut skel_builder = HsTraceSkelBuilder::default();
+    let skel_builder = HsTraceSkelBuilder::default();
     // if opts.verbose {
-    skel_builder.obj_builder.debug(true);
+    //     skel_builder.obj_builder.debug(true);
     // }
 
     let mut open_object = MaybeUninit::uninit();
@@ -92,8 +172,6 @@ fn main() -> Result<()> {
     // Begin tracing
     let mut skel = open_skel.load()?;
     skel.attach()?;
-
-    println!("attached skel");
 
     // TODO: check if this should be little endian!
     let pid_buf = &pid_tgid.to_le_bytes();
@@ -105,22 +183,23 @@ fn main() -> Result<()> {
         .pid_cwd_map
         .update(pid_buf, cwd_buf, MapFlags::ANY)?;
 
-    println!("updated map");
-
     let mut rb_builder = RingBufferBuilder::new();
     rb_builder.add(&skel.maps.output, handle_event)?;
     let rb = rb_builder.build()?;
 
-    println!("let child start");
     unsafe {
-        libc::kill(pid as i32, libc::SIGTERM);
+        kill(pid as i32, SIGUSR1);
     }
 
-    loop {
+    while RUNNING.load(Ordering::Relaxed) {
         match rb.poll(Duration::from_millis(10)) {
             Ok(()) => {}
             Err(_) => {}
         }
     }
+
+    let mut status = MaybeUninit::<c_int>::uninit();
+    unsafe { if waitpid(pid, status.as_mut_ptr(), 0) != pid {} }
+
     Ok(())
 }
