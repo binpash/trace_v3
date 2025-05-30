@@ -33,12 +33,7 @@ use trace_v3::*;
 fn handle_event(data: &[u8]) -> i32 {
     println!("Got event of length {}", data.len());
     if data.len() == size_of::<sys_enter_info0_t>() {
-        let mut arr: [u8; 24] = [0; 24];
-        arr[..data.len()].copy_from_slice(data);
-        let enter0;
-        unsafe {
-            enter0 = transmute::<[u8; 24], sys_enter_info0_t>(arr);
-        }
+        let enter0 = unsafe { &*data.as_ptr().cast::<sys_enter_info0_t>() };
         println!(
             "for ({}, {}) {}(flags={})",
             enter0.pid >> 32,
@@ -48,12 +43,7 @@ fn handle_event(data: &[u8]) -> i32 {
         );
     }
     if data.len() == size_of::<sys_enter_info1_t>() {
-        let mut arr: [u8; 4120] = [0; 4120];
-        arr[..data.len()].copy_from_slice(data);
-        let enter1;
-        unsafe {
-            enter1 = transmute::<[u8; 4120], sys_enter_info1_t>(arr);
-        }
+        let enter1 = unsafe { &*data.as_ptr().cast::<sys_enter_info1_t>() };
         println!(
             "for ({}, {}) {}(fd={},path={},flags={})",
             enter1.pid >> 32,
@@ -65,12 +55,7 @@ fn handle_event(data: &[u8]) -> i32 {
         );
     }
     if data.len() == size_of::<sys_enter_info2_t>() {
-        let mut arr: [u8; 8224] = [0; 8224];
-        arr[..data.len()].copy_from_slice(data);
-        let enter2;
-        unsafe {
-            enter2 = transmute::<[u8; 8224], sys_enter_info2_t>(arr);
-        }
+        let enter2 = unsafe { &*data.as_ptr().cast::<sys_enter_info2_t>() };
         println!(
             "for ({}, {}) {}(fd={},path={},fd2={},path2={},flags={})",
             enter2.pid >> 32,
@@ -84,12 +69,7 @@ fn handle_event(data: &[u8]) -> i32 {
         );
     }
     if data.len() == size_of::<sys_exit_info_t>() {
-        let mut arr: [u8; 16] = [0; 16];
-        arr[..data.len()].copy_from_slice(data);
-        let exit;
-        unsafe {
-            exit = transmute::<[u8; 16], sys_exit_info_t>(arr);
-        }
+        let exit = unsafe { &*data.as_ptr().cast::<sys_exit_info_t>() };
         println!(
             "for ({}, {}) -> {}",
             exit.pid >> 32,
