@@ -5,8 +5,9 @@ use libc::{
     sigset_t, sigwait, waitpid,
 };
 use std::collections::HashMap;
+use std::ffi::CStr;
 use std::io::{Error, ErrorKind};
-use std::mem::{MaybeUninit, size_of, transmute, zeroed};
+use std::mem::{MaybeUninit, size_of, zeroed};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::ptr;
@@ -44,27 +45,30 @@ fn handle_event(data: &[u8]) -> i32 {
     }
     if data.len() == size_of::<sys_enter_info1_t>() {
         let enter1 = unsafe { &*data.as_ptr().cast::<sys_enter_info1_t>() };
+        let cstr = unsafe { CStr::from_ptr(enter1.path.as_ptr()) };
         println!(
             "for ({}, {}) {}(fd={},path={},flags={})",
             enter1.pid >> 32,
             enter1.pid & 0xFFFFFFFF,
             enter1.syscall_nr,
             enter1.fd,
-            String::from_utf8(enter1.path[..].to_vec()).unwrap(),
+            cstr.to_string_lossy(),
             enter1.flags
         );
     }
     if data.len() == size_of::<sys_enter_info2_t>() {
         let enter2 = unsafe { &*data.as_ptr().cast::<sys_enter_info2_t>() };
+        let cstr = unsafe { CStr::from_ptr(enter2.path.as_ptr()) };
+        let cstr2 = unsafe { CStr::from_ptr(enter2.path2.as_ptr()) };
         println!(
             "for ({}, {}) {}(fd={},path={},fd2={},path2={},flags={})",
             enter2.pid >> 32,
             enter2.pid & 0xFFFFFFFF,
             enter2.syscall_nr,
             enter2.fd,
-            String::from_utf8(enter2.path[..].to_vec()).unwrap(),
+            cstr.to_string_lossy(),
             enter2.fd2,
-            String::from_utf8(enter2.path2[..].to_vec()).unwrap(),
+            cstr2.to_string_lossy(),
             enter2.flags
         );
     }
