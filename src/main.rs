@@ -9,6 +9,7 @@ use std::ffi::CStr;
 use std::io::{Error, ErrorKind};
 use std::mem::{MaybeUninit, size_of, zeroed};
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::Command;
 use std::ptr;
 use std::time::Duration;
@@ -137,12 +138,9 @@ fn main() -> Result<()> {
 
     let pid_tgid = (pid as u64) << 32 | pid as u64;
 
-    let cwd = std::env::current_dir()?
-        .into_os_string()
-        .into_string()
-        .unwrap();
+    let cwd = std::env::current_dir()?;
     // NOTE: map for userspace.
-    let mut pid_cwd_map = HashMap::<u64, String>::new();
+    let mut pid_cwd_map = HashMap::<u64, PathBuf>::new();
     pid_cwd_map.insert(pid_tgid, cwd.clone());
 
     let skel_builder = HsTraceSkelBuilder::default();
@@ -157,15 +155,14 @@ fn main() -> Result<()> {
     let mut skel = open_skel.load()?;
     skel.attach()?;
 
-    // TODO: check if this should be little endian!
-    let pid_buf = &pid_tgid.to_le_bytes();
-    let mut cwd_bytes = cwd.into_bytes();
-    cwd_bytes.resize(4096, 0);
-    let cwd_buf = &cwd_bytes;
+    // TODO: check if native endianness is correct!
+    let pid_buf = &pid_tgid.to_ne_bytes();
+    let dummy_val: i32 = 1;
+    let dummy_bytes = &dummy_val.to_ne_bytes();
     let _ = skel
         .maps
-        .pid_cwd_map
-        .update(pid_buf, cwd_buf, MapFlags::ANY)?;
+        .pid_tgid_set
+        .update(pid_buf, dummy_bytes, MapFlags::ANY)?;
 
     let mut rb_builder = RingBufferBuilder::new();
     rb_builder.add(&skel.maps.output, handle_event)?;

@@ -28,17 +28,11 @@ struct {
 } write_path_set SEC(".maps");
 
 struct {
-	__uint(type, BPF_MAP_TYPE_QUEUE);
-	__type(value, u64);
-	__uint(max_entries, 1);
-} syscall_nr_queue SEC(".maps");
-
-struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__type(key, u64);
-	__type(value, char[4096]);
+	__type(value, u32);
 	__uint(max_entries, 1024);
-} pid_cwd_map SEC(".maps");
+} pid_tgid_set SEC(".maps");
 
 enum syscall_event_type {
 	SYS_ENTER0,
@@ -53,7 +47,7 @@ int
 BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 {
 	u64 pid = bpf_get_current_pid_tgid();
-	if (bpf_map_lookup_elem(&pid_cwd_map, &pid) == NULL) {
+	if (bpf_map_lookup_elem(&pid_tgid_set, &pid) == NULL) {
 		return 0;
 	}
 
@@ -67,7 +61,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	switch (syscall_id) {
 #ifdef __NR_exit
 	case __NR_exit:
-		if (bpf_map_delete_elem(&pid_cwd_map, &pid) < 0) {
+		if (bpf_map_delete_elem(&pid_tgid_set, &pid) < 0) {
 			bpf_printk("failed to remove pid\n");
 		}
 		return 0;
@@ -322,7 +316,7 @@ int
 BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 {
 	u64 pid = bpf_get_current_pid_tgid();
-	if (bpf_map_lookup_elem(&pid_cwd_map, &pid) == NULL) {
+	if (bpf_map_lookup_elem(&pid_tgid_set, &pid) == NULL) {
 		return 0;
 	}
 
