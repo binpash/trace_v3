@@ -34,14 +34,13 @@ jobs:
           which bpftool
           clang --version
 
-
       - name: checkout
         uses: actions/checkout@v4
 
       - name: build
         run: |
-          make
-          sudo make install
+          cargo build --release
+          sudo install -o root -m 4755 target/release/trace_v3 /usr/local/bin
 
       - name: run tests
         run: |
