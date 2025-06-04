@@ -12,6 +12,8 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::ptr;
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 // use clap::Parser;
@@ -32,6 +34,7 @@ mod hs_trace {
 use hs_trace::*;
 use trace_v3::*;
 
+#[allow(dead_code)]
 fn handle_event(data: &[u8]) -> i32 {
     println!("Got event of length {}", data.len());
     if data.len() == size_of::<sys_enter_info0_t>() {
@@ -83,6 +86,19 @@ fn handle_event(data: &[u8]) -> i32 {
         );
     }
     return 0;
+}
+
+fn event_stream_handler(rx: mpsc::Receiver<Option<Vec<u8>>>) -> Result<()> {
+    loop {
+        match rx.recv() {
+            Ok(Some(d)) => {
+                println!("Got event of length {}", d.len());
+            }
+            Ok(None) => break,
+            Err(_) => {}
+        }
+    }
+    Ok(())
 }
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -139,7 +155,7 @@ fn main() -> Result<()> {
     let pid_tgid = (pid as u64) << 32 | pid as u64;
 
     let cwd = std::env::current_dir()?;
-    // NOTE: map for userspace.
+    // NOTE: map for userspace
     let mut pid_cwd_map = HashMap::<u64, PathBuf>::new();
     pid_cwd_map.insert(pid_tgid, cwd.clone());
 
@@ -155,6 +171,7 @@ fn main() -> Result<()> {
     let mut skel = open_skel.load()?;
     skel.attach()?;
 
+    // update the map
     // TODO: check if native endianness is correct!
     let pid_buf = &pid_tgid.to_ne_bytes();
     let dummy_val: i32 = 1;
@@ -164,10 +181,24 @@ fn main() -> Result<()> {
         .pid_tgid_set
         .update(pid_buf, dummy_bytes, MapFlags::ANY)?;
 
+    // create channel and spawn worker thread
+    let (sender, receiver) = mpsc::channel::<Option<Vec<u8>>>();
+    let stream_handler = thread::spawn(move || event_stream_handler(receiver));
+
+    // setup ringbuf
     let mut rb_builder = RingBufferBuilder::new();
-    rb_builder.add(&skel.maps.output, handle_event)?;
+    rb_builder.add(&skel.maps.output, |data| {
+        // TODO: to_vec might be inefficient
+        // handle all cases
+        match sender.send(Some(data.to_vec())) {
+            Ok(_) => {}
+            Err(_) => {}
+        }
+        return 0;
+    })?;
     let rb = rb_builder.build()?;
 
+    // start the child
     unsafe {
         kill(pid as i32, SIGUSR1);
     }
@@ -182,5 +213,12 @@ fn main() -> Result<()> {
     let mut status = MaybeUninit::<c_int>::uninit();
     unsafe { if waitpid(pid, status.as_mut_ptr(), 0) != pid {} }
 
+    // send None to trigger thread to stop
+    // TODO: handle all cases
+    match sender.send(None) {
+        Ok(_) => {}
+        Err(_) => {}
+    }
+    let _ = stream_handler.join();
     Ok(())
 }
