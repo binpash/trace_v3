@@ -34,65 +34,54 @@ mod hs_trace {
 use hs_trace::*;
 use trace_v3::*;
 
-#[allow(dead_code)]
-fn handle_event(data: &[u8]) -> i32 {
-    println!("Got event of length {}", data.len());
-    if data.len() == size_of::<sys_enter_info0_t>() {
-        let enter0 = unsafe { &*data.as_ptr().cast::<sys_enter_info0_t>() };
-        println!(
-            "for ({}, {}) {}(flags={})",
-            enter0.pid >> 32,
-            enter0.pid & 0xFFFFFFFF,
-            enter0.syscall_nr,
-            enter0.flags
-        );
-    }
-    if data.len() == size_of::<sys_enter_info1_t>() {
-        let enter1 = unsafe { &*data.as_ptr().cast::<sys_enter_info1_t>() };
-        let cstr = unsafe { CStr::from_ptr(enter1.path.as_ptr()) };
-        println!(
-            "for ({}, {}) {}(fd={},path={},flags={})",
-            enter1.pid >> 32,
-            enter1.pid & 0xFFFFFFFF,
-            enter1.syscall_nr,
-            enter1.fd,
-            cstr.to_string_lossy(),
-            enter1.flags
-        );
-    }
-    if data.len() == size_of::<sys_enter_info2_t>() {
-        let enter2 = unsafe { &*data.as_ptr().cast::<sys_enter_info2_t>() };
-        let cstr = unsafe { CStr::from_ptr(enter2.path.as_ptr()) };
-        let cstr2 = unsafe { CStr::from_ptr(enter2.path2.as_ptr()) };
-        println!(
-            "for ({}, {}) {}(fd={},path={},fd2={},path2={},flags={})",
-            enter2.pid >> 32,
-            enter2.pid & 0xFFFFFFFF,
-            enter2.syscall_nr,
-            enter2.fd,
-            cstr.to_string_lossy(),
-            enter2.fd2,
-            cstr2.to_string_lossy(),
-            enter2.flags
-        );
-    }
-    if data.len() == size_of::<sys_exit_info_t>() {
-        let exit = unsafe { &*data.as_ptr().cast::<sys_exit_info_t>() };
-        println!(
-            "for ({}, {}) -> {}",
-            exit.pid >> 32,
-            exit.pid & 0xFFFFFFFF,
-            exit.ret
-        );
-    }
-    return 0;
+enum SyscallEvent {
+    Enter0(sys_enter_info0_t),
+    Enter1(sys_enter_info1_t),
+    Enter2(sys_enter_info2_t),
+    Exit(sys_exit_info_t),
 }
 
-fn event_stream_handler(rx: mpsc::Receiver<Option<Vec<u8>>>) -> Result<()> {
+fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<()> {
     loop {
         match rx.recv() {
-            Ok(Some(d)) => {
-                println!("Got event of length {}", d.len());
+            Ok(Some(SyscallEvent::Enter0(e))) => {
+                println!(
+                    "for ({}, {}) {}(flags={})",
+                    e.pid >> 32,
+                    e.pid & 0xFFFFFFFF,
+                    e.syscall_nr,
+                    e.flags
+                );
+            }
+            Ok(Some(SyscallEvent::Enter1(e))) => {
+                let cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
+                println!(
+                    "for ({}, {}) {}(fd={},path={},flags={})",
+                    e.pid >> 32,
+                    e.pid & 0xFFFFFFFF,
+                    e.syscall_nr,
+                    e.fd,
+                    cstr.to_string_lossy(),
+                    e.flags
+                );
+            }
+            Ok(Some(SyscallEvent::Enter2(e))) => {
+                let cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
+                let cstr2 = unsafe { CStr::from_ptr(e.path2.as_ptr()) };
+                println!(
+                    "for ({}, {}) {}(fd={},path={},fd2={},path2={},flags={})",
+                    e.pid >> 32,
+                    e.pid & 0xFFFFFFFF,
+                    e.syscall_nr,
+                    e.fd,
+                    cstr.to_string_lossy(),
+                    e.fd2,
+                    cstr2.to_string_lossy(),
+                    e.flags
+                );
+            }
+            Ok(Some(SyscallEvent::Exit(e))) => {
+                println!("for ({}, {}) -> {}", e.pid >> 32, e.pid & 0xFFFFFFFF, e.ret);
             }
             Ok(None) => break,
             Err(_) => {}
@@ -182,15 +171,25 @@ fn main() -> Result<()> {
         .update(pid_buf, dummy_bytes, MapFlags::ANY)?;
 
     // create channel and spawn worker thread
-    let (sender, receiver) = mpsc::channel::<Option<Vec<u8>>>();
+    let (sender, receiver) = mpsc::channel::<Option<SyscallEvent>>();
     let stream_handler = thread::spawn(move || event_stream_handler(receiver));
 
     // setup ringbuf
     let mut rb_builder = RingBufferBuilder::new();
     rb_builder.add(&skel.maps.output, |data| {
-        // TODO: to_vec might be inefficient
+        let event = if data.len() == size_of::<sys_enter_info0_t>() {
+            SyscallEvent::Enter0(unsafe { *data.as_ptr().cast::<sys_enter_info0_t>() })
+        } else if data.len() == size_of::<sys_enter_info1_t>() {
+            SyscallEvent::Enter1(unsafe { *data.as_ptr().cast::<sys_enter_info1_t>() })
+        } else if data.len() == size_of::<sys_enter_info2_t>() {
+            SyscallEvent::Enter2(unsafe { *data.as_ptr().cast::<sys_enter_info2_t>() })
+        } else if data.len() == size_of::<sys_exit_info_t>() {
+            SyscallEvent::Exit(unsafe { *data.as_ptr().cast::<sys_exit_info_t>() })
+        } else {
+            panic!("invalid event size {}", data.len());
+        };
         // handle all cases
-        match sender.send(Some(data.to_vec())) {
+        match sender.send(Some(event)) {
             Ok(_) => {}
             Err(_) => {}
         }
