@@ -612,6 +612,7 @@ dependencies = [
  "libbpf-rs",
  "libbpf-sys",
  "libc",
+ "once_cell",
  "plain",
 ]
 

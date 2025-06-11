@@ -1,8 +1,10 @@
 use anyhow::Result;
 use libc;
-use std::collections::{HashMap, HashSet};
+use once_cell::sync::Lazy;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::CStr;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::sync::mpsc;
 use trace_v3::*;
 
@@ -151,7 +153,7 @@ pub enum SyscallEvent {
 
 pub struct Context {
     cwd_map: HashMap<u64, PathBuf>,
-    log: HashMap<u64, Vec<SyscallEvent>>,
+    log: HashMap<u64, VecDeque<SyscallEvent>>,
     process_graph: HashMap<u64, u64>,
 }
 
@@ -162,6 +164,13 @@ impl Context {
             log: HashMap::new(),
             process_graph: HashMap::new(),
         }
+    }
+
+    pub fn update_log(&mut self, pid_tgid: u64, event: SyscallEvent) {
+        self.log
+            .entry(pid_tgid)
+            .and_modify(|vd| vd.push_back(event))
+            .or_insert(VecDeque::new());
     }
 
     pub fn do_clone(&mut self, parent_pid_tgid: u64, child_pid_tgid: u64) -> () {
@@ -189,51 +198,111 @@ impl RWSet {
     pub fn update_write_set(&mut self, path: PathBuf) {
         self.write_set.insert(path);
     }
+
+    fn compute_closure(canon_path: PathBuf) -> Vec<PathBuf> {
+        let mut v = Vec::new();
+        while let Some(p) = canon_path.parent() {
+            v.push(p.to_path_buf());
+        }
+        v
+    }
 }
 
-// fn handle()
+pub static CTXT: Lazy<Mutex<Context>> = Lazy::new(|| Mutex::new(Context::new()));
+pub static SETS: Lazy<Mutex<RWSet>> = Lazy::new(|| Mutex::new(RWSet::new()));
+
+enum SyscallInfo {
+    Event0 {
+        pid: u64,
+        ret: i64,
+        syscall_nr: u64,
+        flags: u32,
+    },
+    Event1 {
+        pid: u64,
+        ret: i64,
+        syscall_nr: u64,
+        flags: u32,
+        fd: i32,
+        path: String,
+    },
+    Event2 {
+        pid: u64,
+        ret: i64,
+        syscall_nr: u64,
+        flags: u32,
+        fd: i32,
+        path: String,
+        fd2: i32,
+        path2: String,
+    },
+}
+
+fn on_event_update_rw_sets(event: SyscallInfo) {}
 
 pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<()> {
     loop {
         match rx.recv() {
             Ok(Some(SyscallEvent::Enter0(e))) => {
-                println!(
-                    "for ({}, {}) {}(flags={})",
-                    e.pid >> 32,
-                    e.pid & 0xFFFFFFFF,
-                    e.syscall_nr,
-                    e.flags
-                );
+                let pid = e.pid as u64;
+                let mut ctxt = CTXT.lock().unwrap();
+                ctxt.update_log(pid, SyscallEvent::Enter0(e))
             }
             Ok(Some(SyscallEvent::Enter1(e))) => {
-                let cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
-                println!(
-                    "for ({}, {}) {}(fd={},path={},flags={})",
-                    e.pid >> 32,
-                    e.pid & 0xFFFFFFFF,
-                    e.syscall_nr,
-                    e.fd,
-                    cstr.to_string_lossy(),
-                    e.flags
-                );
+                let pid = e.pid as u64;
+                let mut ctxt = CTXT.lock().unwrap();
+                ctxt.update_log(pid, SyscallEvent::Enter1(e))
             }
             Ok(Some(SyscallEvent::Enter2(e))) => {
-                let cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
-                let cstr2 = unsafe { CStr::from_ptr(e.path2.as_ptr()) };
-                println!(
-                    "for ({}, {}) {}(fd={},path={},fd2={},path2={},flags={})",
-                    e.pid >> 32,
-                    e.pid & 0xFFFFFFFF,
-                    e.syscall_nr,
-                    e.fd,
-                    cstr.to_string_lossy(),
-                    e.fd2,
-                    cstr2.to_string_lossy(),
-                    e.flags
-                );
+                let pid = e.pid as u64;
+                let mut ctxt = CTXT.lock().unwrap();
+                ctxt.update_log(pid, SyscallEvent::Enter2(e))
             }
-            Ok(Some(SyscallEvent::Exit(e))) => {
-                println!("for ({}, {}) -> {}", e.pid >> 32, e.pid & 0xFFFFFFFF, e.ret);
+            Ok(Some(SyscallEvent::Exit(exit_info))) => {
+                let pid = exit_info.pid as u64;
+                let mut ctxt = CTXT.lock().unwrap();
+                ctxt.update_log(pid, SyscallEvent::Exit(exit_info));
+                let event_queue = ctxt.log.get(&pid).unwrap();
+                let len = event_queue.len();
+                let enter_event = &event_queue[len - 2];
+                match enter_event {
+                    SyscallEvent::Enter0(e) => {
+                        on_event_update_rw_sets(SyscallInfo::Event0 {
+                            pid: e.pid as u64,
+                            ret: exit_info.ret,
+                            syscall_nr: e.syscall_nr as u64,
+                            flags: e.flags as u32,
+                        });
+                    }
+                    SyscallEvent::Enter1(e) => {
+                        let path_cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
+
+                        on_event_update_rw_sets(SyscallInfo::Event1 {
+                            pid: e.pid as u64,
+                            ret: exit_info.ret,
+                            syscall_nr: e.syscall_nr as u64,
+                            flags: e.flags as u32,
+                            fd: e.fd,
+                            path: String::from_utf8_lossy(path_cstr.to_bytes()).to_string(),
+                        });
+                    }
+                    SyscallEvent::Enter2(e) => {
+                        let path_cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
+                        let path2_cstr = unsafe { CStr::from_ptr(e.path2.as_ptr()) };
+
+                        on_event_update_rw_sets(SyscallInfo::Event2 {
+                            pid: e.pid as u64,
+                            ret: exit_info.ret,
+                            syscall_nr: e.syscall_nr as u64,
+                            flags: e.flags as u32,
+                            fd: e.fd,
+                            path: String::from_utf8_lossy(path_cstr.to_bytes()).to_string(),
+                            fd2: e.fd2,
+                            path2: String::from_utf8_lossy(path2_cstr.to_bytes()).to_string(),
+                        });
+                    }
+                    _ => {}
+                };
             }
             Ok(None) => break,
             Err(_) => {}
@@ -241,3 +310,46 @@ pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<
     }
     Ok(())
 }
+// match rx.recv() {
+//     Ok(Some(SyscallEvent::Enter0(e))) => {
+//         println!(
+//             "for ({}, {}) {}(flags={})",
+//             e.pid >> 32,
+//             e.pid & 0xFFFFFFFF,
+//             e.syscall_nr,
+//             e.flags
+//         );
+//     }
+//     Ok(Some(SyscallEvent::Enter1(e))) => {
+//         let cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
+//         println!(
+//             "for ({}, {}) {}(fd={},path={},flags={})",
+//             e.pid >> 32,
+//             e.pid & 0xFFFFFFFF,
+//             e.syscall_nr,
+//             e.fd,
+//             cstr.to_string_lossy(),
+//             e.flags
+//         );
+//     }
+//     Ok(Some(SyscallEvent::Enter2(e))) => {
+//         let cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
+//         let cstr2 = unsafe { CStr::from_ptr(e.path2.as_ptr()) };
+//         println!(
+//             "for ({}, {}) {}(fd={},path={},fd2={},path2={},flags={})",
+//             e.pid >> 32,
+//             e.pid & 0xFFFFFFFF,
+//             e.syscall_nr,
+//             e.fd,
+//             cstr.to_string_lossy(),
+//             e.fd2,
+//             cstr2.to_string_lossy(),
+//             e.flags
+//         );
+//     }
+//     Ok(Some(SyscallEvent::Exit(e))) => {
+//         println!("for ({}, {}) -> {}", e.pid >> 32, e.pid & 0xFFFFFFFF, e.ret);
+//     }
+//     Ok(None) => break,
+//     Err(_) => {}
+// }
