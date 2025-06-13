@@ -215,13 +215,13 @@ enum SyscallInfo {
     Event0 {
         pid: u64,
         ret: i64,
-        syscall_nr: u64,
+        syscall_nr: i64,
         flags: u32,
     },
     Event1 {
         pid: u64,
         ret: i64,
-        syscall_nr: u64,
+        syscall_nr: i64,
         flags: u32,
         fd: i32,
         path: String,
@@ -229,7 +229,7 @@ enum SyscallInfo {
     Event2 {
         pid: u64,
         ret: i64,
-        syscall_nr: u64,
+        syscall_nr: i64,
         flags: u32,
         fd: i32,
         path: String,
@@ -238,7 +238,90 @@ enum SyscallInfo {
     },
 }
 
-fn on_event_update_rw_sets(event: SyscallInfo) {}
+fn on_event_update_rw_sets(event: SyscallInfo) {
+    match event {
+        SyscallInfo::Event0 {
+            pid,
+            ret,
+            syscall_nr,
+            flags,
+        } => match syscall_nr {
+            libc::SYS_clone => {}
+            libc::SYS_inotify_add_watch => {}
+            _ => {}
+        },
+        SyscallInfo::Event1 {
+            pid,
+            ret,
+            syscall_nr,
+            flags,
+            fd,
+            path,
+        } => match syscall_nr {
+            libc::SYS_openat => {}
+            // libc::SYS_open => {}
+            libc::SYS_chdir => {}
+            libc::SYS_symlinkat => {}
+            // libc::SYS_symlink => {}
+            // r path
+            libc::SYS_execve => {}
+            libc::SYS_statfs => {}
+            libc::SYS_getxattr => {}
+            libc::SYS_lgetxattr => {}
+            // libc::SYS_stat => {}
+            // libc::SYS_lstat => {}
+            // libc::SYS_access => {}
+            // libc::SYS_readlink => {}
+            // w path
+            libc::SYS_truncate => {}
+            libc::SYS_acct => {}
+            // libc::SYS_mkdir => {}
+            // libc::SYS_rmdir => {}
+            // libc::SYS_creat => {}
+            // libc::SYS_chmod => {}
+            // libc::SYS_chown => {}
+            // libc::SYS_lchown => {}
+            // libc::SYS_utime => {}
+            // libc::SYS_utimes => {}
+            // libc::SYS_mknod => {}
+            // libc::SYS_unlink => {}
+            // r fd path
+            libc::SYS_newfstatat => {}
+            libc::SYS_statx => {}
+            libc::SYS_name_to_handle_at => {}
+            libc::SYS_readlinkat => {}
+            libc::SYS_faccessat => {}
+            libc::SYS_faccessat2 => {}
+            libc::SYS_execveat => {}
+            // w fd path
+            libc::SYS_linkat => {}
+            libc::SYS_unlinkat => {}
+            libc::SYS_utimensat => {}
+            libc::SYS_mkdirat => {}
+            libc::SYS_mknodat => {}
+            libc::SYS_fchownat => {}
+            libc::SYS_fchmodat => {}
+            // libc::SYS_futimeat => {}
+            _ => {}
+        },
+        SyscallInfo::Event2 {
+            pid,
+            ret,
+            syscall_nr,
+            flags,
+            fd,
+            path,
+            fd2,
+            path2,
+        } => match syscall_nr {
+            // libc::SYS_link => {}
+            // libc::SYS_rename => {}
+            libc::SYS_renameat => {}
+            libc::SYS_renameat2 => {}
+            _ => {}
+        },
+    }
+}
 
 pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<()> {
     loop {
@@ -270,7 +353,7 @@ pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<
                         on_event_update_rw_sets(SyscallInfo::Event0 {
                             pid: e.pid as u64,
                             ret: exit_info.ret,
-                            syscall_nr: e.syscall_nr as u64,
+                            syscall_nr: e.syscall_nr,
                             flags: e.flags as u32,
                         });
                     }
@@ -280,7 +363,7 @@ pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<
                         on_event_update_rw_sets(SyscallInfo::Event1 {
                             pid: e.pid as u64,
                             ret: exit_info.ret,
-                            syscall_nr: e.syscall_nr as u64,
+                            syscall_nr: e.syscall_nr,
                             flags: e.flags as u32,
                             fd: e.fd,
                             path: String::from_utf8_lossy(path_cstr.to_bytes()).to_string(),
@@ -293,7 +376,7 @@ pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<
                         on_event_update_rw_sets(SyscallInfo::Event2 {
                             pid: e.pid as u64,
                             ret: exit_info.ret,
-                            syscall_nr: e.syscall_nr as u64,
+                            syscall_nr: e.syscall_nr,
                             flags: e.flags as u32,
                             fd: e.fd,
                             path: String::from_utf8_lossy(path_cstr.to_bytes()).to_string(),
