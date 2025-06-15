@@ -35,6 +35,7 @@ use hs_trace::*;
 use trace_v3::*;
 
 mod dep_tracer;
+use crate::dep_tracer::CTXT;
 use crate::dep_tracer::SyscallEvent;
 use crate::dep_tracer::event_stream_handler;
 
@@ -110,7 +111,7 @@ fn main() -> Result<()> {
 
     // update the map
     // TODO: check if native endianness is correct!
-    let pid_buf = &pid_tgid.to_ne_bytes();
+    let pid_buf = &pid.to_ne_bytes();
     let dummy_val: i32 = 1;
     let dummy_bytes = &dummy_val.to_ne_bytes();
     let _ = skel
@@ -167,5 +168,9 @@ fn main() -> Result<()> {
         Err(_) => {}
     }
     let _ = stream_handler.join();
+
+    let mut ctxt = CTXT.lock().unwrap();
+    ctxt.dump_log();
+
     Ok(())
 }

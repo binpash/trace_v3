@@ -13,23 +13,23 @@ struct {
 	__uint(max_entries, 1024 * 1024);
 } output SEC(".maps");
 
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__type(key, struct unique_file_t);
-	__type(value, char[4096]);
-	__uint(max_entries, 256);
-} read_path_set SEC(".maps");
+// struct {
+// 	__uint(type, BPF_MAP_TYPE_HASH);
+// 	__type(key, struct unique_file_t);
+// 	__type(value, char[4096]);
+// 	__uint(max_entries, 256);
+// } read_path_set SEC(".maps");
+//
+// struct {
+// 	__uint(type, BPF_MAP_TYPE_HASH);
+// 	__type(key, struct unique_file_t);
+// 	__type(value, char[4096]);
+// 	__uint(max_entries, 256);
+// } write_path_set SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__type(key, struct unique_file_t);
-	__type(value, char[4096]);
-	__uint(max_entries, 256);
-} write_path_set SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__type(key, u64);
+	__type(key, u32);
 	__type(value, u32);
 	__uint(max_entries, 1024);
 } pid_tgid_set SEC(".maps");
@@ -46,8 +46,9 @@ SEC("tp_btf/sys_enter")
 int
 BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 {
-	u64 pid = bpf_get_current_pid_tgid();
-	if (bpf_map_lookup_elem(&pid_tgid_set, &pid) == NULL) {
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u32 tgid = (u32)(pid_tgid >> 32);
+	if (bpf_map_lookup_elem(&pid_tgid_set, &tgid) == NULL) {
 		return 0;
 	}
 
@@ -61,7 +62,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	switch (syscall_id) {
 #ifdef __NR_exit
 	case __NR_exit:
-		if (bpf_map_delete_elem(&pid_tgid_set, &pid) < 0) {
+		if (bpf_map_delete_elem(&pid_tgid_set, &tgid) < 0) {
 			bpf_printk("failed to remove pid\n");
 		}
 		return 0;
@@ -87,10 +88,22 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		event_type = SYS_ENTER1;
 		break;
 #endif
+#ifdef __NR_fork
+	case __NR_fork:
+		event_type = SYS_ENTER0;
+		break;
+#endif
 #ifdef __NR_clone
 	case __NR_clone:
 		flags = (int)PT_REGS_PARM3_CORE(regs);
 		event_type = SYS_ENTER0;
+		bpf_printk("clone was called\n");
+		break;
+#endif
+#ifdef __NR_clone3
+	case __NR_clone3:
+		event_type = SYS_ENTER0;
+		bpf_printk("clone3 was called\n");
 		break;
 #endif
 #ifdef __NR_symlinkat
@@ -264,6 +277,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		event_type = SYS_ENTER1;
 		break;
 	default:
+		bpf_printk("ignoring sys_enter event for syscall %ld\n", syscall_id);
 		return 0;
 	}
 
@@ -277,7 +291,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 				 &output, sizeof(struct sys_enter_info0_t), 0)) == NULL) {
 			return 0;
 		}
-		enter0->pid = pid;
+		enter0->pid = pid_tgid;
 		enter0->syscall_nr = syscall_id;
 		enter0->flags = flags;
 		bpf_ringbuf_submit(enter0, 0);
@@ -286,7 +300,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 				 &output, sizeof(struct sys_enter_info1_t), 0)) == NULL) {
 			return 0;
 		}
-		enter1->pid = pid;
+		enter1->pid = pid_tgid;
 		enter1->syscall_nr = syscall_id;
 		enter1->flags = flags;
 		enter1->fd = fd;
@@ -297,7 +311,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 				 &output, sizeof(struct sys_enter_info2_t), 0)) == NULL) {
 			return 0;
 		}
-		enter2->pid = pid;
+		enter2->pid = pid_tgid;
 		enter2->syscall_nr = syscall_id;
 		enter2->flags = flags;
 		enter2->fd = fd;
@@ -315,10 +329,13 @@ SEC("tp_btf/sys_exit")
 int
 BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 {
-	u64 pid = bpf_get_current_pid_tgid();
-	if (bpf_map_lookup_elem(&pid_tgid_set, &pid) == NULL) {
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u32 tgid = (u32)(pid_tgid >> 32);
+	if (bpf_map_lookup_elem(&pid_tgid_set, &tgid) == NULL) {
 		return 0;
 	}
+	u32 dummy_val = 1;
+	u32 ret_val = ret;
 
 	// TODO (dan 2025-05-27): figure out if these macros are correct!
 #ifdef __aarch64__
@@ -326,10 +343,26 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 #elifdef __x86_64__
 	long syscall_id = regs->orig_ax;
 #endif
+	bpf_printk("sys_exit event for syscall %ld\n", syscall_id);
 
 	switch (syscall_id) {
+#ifdef __NR_fork
+	case __NR_fork:
+#endif
+#ifdef __NR_clone3
+	case __NR_clone3:
+		bpf_printk("clone3 was called and returned %ld\n", ret);
+		break;
+#endif
 #ifdef __NR_clone
 	case __NR_clone:
+		bpf_printk("clone was called and returned %ld\n", ret);
+		// if (bpf_map_update_elem(&pid_tgid_set, &ret_val, &dummy_val, BPF_ANY)
+		// <
+		//     0) {
+		// 	return 0;
+		// }
+		break;
 #endif
 #ifdef __NR_exit
 	case __NR_exit:
@@ -481,7 +514,7 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 	                                0)) == NULL) {
 		return 0;
 	}
-	exit->pid = pid;
+	exit->pid = pid_tgid;
 	exit->ret = ret;
 	bpf_ringbuf_submit(exit, 0);
 

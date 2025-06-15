@@ -37,7 +37,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     );
     let include_flag = format!("-I/usr/include/{}-linux-gnu", arch);
-
     SkeletonBuilder::new()
         .source("src/bpf/hs_trace.bpf.c")
         .debug(true)
