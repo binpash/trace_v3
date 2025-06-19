@@ -32,7 +32,7 @@ struct {
 	__type(key, u32);
 	__type(value, u32);
 	__uint(max_entries, 1024);
-} pid_tgid_set SEC(".maps");
+} tgid_set SEC(".maps");
 
 enum syscall_event_type {
 	SYS_ENTER0,
@@ -41,14 +41,48 @@ enum syscall_event_type {
 	SYS_EXIT
 };
 
+SEC("tp_btf/sched_process_fork")
+
+int
+BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
+         struct task_struct *child)
+{
+	u32 dummy_val = 1;
+	u32 p_tgid = parent->tgid;
+	u32 c_tgid = child->tgid;
+	if (bpf_map_lookup_elem(&tgid_set, &p_tgid) == NULL) {
+		return 0;
+	}
+	if (bpf_map_update_elem(&tgid_set, &c_tgid, &dummy_val, BPF_ANY) < 0) {
+		bpf_printk("failed to update tgid set with %d\n", c_tgid);
+		return 0;
+	}
+	bpf_printk("update tgid set with %d\n", c_tgid);
+	return 0;
+}
+
+SEC("tp_btf/sched_process_exit")
+
+int
+BPF_PROG(hs_trace_process_exit, struct task_struct *p)
+{
+	u32 tgid = p->tgid;
+	if (bpf_map_delete_elem(&tgid_set, &tgid) < 0) {
+		bpf_printk("failed to delete %d from tgid set\n", tgid);
+		return 0;
+	}
+	bpf_printk("remove %d from tgid set\n", tgid);
+	return 0;
+}
+
 SEC("tp_btf/sys_enter")
 
 int
 BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 {
 	u64 pid_tgid = bpf_get_current_pid_tgid();
-	u32 tgid = (u32)(pid_tgid >> 32);
-	if (bpf_map_lookup_elem(&pid_tgid_set, &tgid) == NULL) {
+	u32 tgid = pid_tgid >> 32;
+	if (bpf_map_lookup_elem(&tgid_set, &tgid) == NULL) {
 		return 0;
 	}
 
@@ -60,13 +94,6 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	enum syscall_event_type event_type;
 
 	switch (syscall_id) {
-#ifdef __NR_exit
-	case __NR_exit:
-		if (bpf_map_delete_elem(&pid_tgid_set, &tgid) < 0) {
-			bpf_printk("failed to remove pid\n");
-		}
-		return 0;
-#endif
 #ifdef __NR_openat
 	case __NR_openat: /* individually */
 		fd = (int)PT_REGS_PARM1_CORE(regs);
@@ -86,24 +113,6 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	case __NR_chdir:
 		path = (char *)PT_REGS_PARM1_CORE(regs);
 		event_type = SYS_ENTER1;
-		break;
-#endif
-#ifdef __NR_fork
-	case __NR_fork:
-		event_type = SYS_ENTER0;
-		break;
-#endif
-#ifdef __NR_clone
-	case __NR_clone:
-		flags = (int)PT_REGS_PARM3_CORE(regs);
-		event_type = SYS_ENTER0;
-		bpf_printk("clone was called\n");
-		break;
-#endif
-#ifdef __NR_clone3
-	case __NR_clone3:
-		event_type = SYS_ENTER0;
-		bpf_printk("clone3 was called\n");
 		break;
 #endif
 #ifdef __NR_symlinkat
@@ -154,7 +163,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 #ifdef __NR_inotify_add_watch
 	case __NR_inotify_add_watch:
 		path = (char *)PT_REGS_PARM2_CORE(regs);
-		event_type = SYS_ENTER0;
+		event_type = SYS_ENTER1;
 		break;
 #endif
 #ifdef __NR_execve
@@ -277,7 +286,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		event_type = SYS_ENTER1;
 		break;
 	default:
-		bpf_printk("ignoring sys_enter event for syscall %ld\n", syscall_id);
+		// bpf_printk("ignoring sys_enter event for syscall %ld\n", syscall_id);
 		return 0;
 	}
 
@@ -330,12 +339,10 @@ int
 BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 {
 	u64 pid_tgid = bpf_get_current_pid_tgid();
-	u32 tgid = (u32)(pid_tgid >> 32);
-	if (bpf_map_lookup_elem(&pid_tgid_set, &tgid) == NULL) {
+	u32 tgid = pid_tgid >> 32;
+	if (bpf_map_lookup_elem(&tgid_set, &tgid) == NULL) {
 		return 0;
 	}
-	u32 dummy_val = 1;
-	u32 ret_val = ret;
 
 	// TODO (dan 2025-05-27): figure out if these macros are correct!
 #ifdef __aarch64__
@@ -343,30 +350,9 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 #elifdef __x86_64__
 	long syscall_id = regs->orig_ax;
 #endif
-	bpf_printk("sys_exit event for syscall %ld\n", syscall_id);
+	// bpf_printk("sys_exit event for syscall %ld\n", syscall_id);
 
 	switch (syscall_id) {
-#ifdef __NR_fork
-	case __NR_fork:
-#endif
-#ifdef __NR_clone3
-	case __NR_clone3:
-		bpf_printk("clone3 was called and returned %ld\n", ret);
-		break;
-#endif
-#ifdef __NR_clone
-	case __NR_clone:
-		bpf_printk("clone was called and returned %ld\n", ret);
-		// if (bpf_map_update_elem(&pid_tgid_set, &ret_val, &dummy_val, BPF_ANY)
-		// <
-		//     0) {
-		// 	return 0;
-		// }
-		break;
-#endif
-#ifdef __NR_exit
-	case __NR_exit:
-#endif
 #ifdef __NR_openat
 	case __NR_openat: /* individually */
 #endif

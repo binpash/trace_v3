@@ -116,7 +116,7 @@ fn main() -> Result<()> {
     let dummy_bytes = &dummy_val.to_ne_bytes();
     let _ = skel
         .maps
-        .pid_tgid_set
+        .tgid_set
         .update(pid_buf, dummy_bytes, MapFlags::ANY)?;
 
     // create channel and spawn worker thread
