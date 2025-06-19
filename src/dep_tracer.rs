@@ -333,21 +333,9 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             }
             // libc::SYS_symlink => {}
             // r path
-            libc::SYS_execve => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_first_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
-            libc::SYS_statfs => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_first_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
-            libc::SYS_getxattr => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_first_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
+            libc::SYS_execve |
+            libc::SYS_statfs |
+            libc::SYS_getxattr |
             libc::SYS_lgetxattr => {
                 let mut ctxt = CTXT.lock().unwrap();
                 let mut sets = SETS.lock().unwrap();
@@ -358,11 +346,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             // libc::SYS_access => {}
             // libc::SYS_readlink => {}
             // w path
-            libc::SYS_truncate => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_w_first_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
+            libc::SYS_truncate |
             libc::SYS_acct => {
                 let mut ctxt = CTXT.lock().unwrap();
                 let mut sets = SETS.lock().unwrap();
@@ -379,72 +363,24 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             // libc::SYS_mknod => {}
             // libc::SYS_unlink => {}
             // r fd path
-            libc::SYS_newfstatat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
-            libc::SYS_statx => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
-            libc::SYS_name_to_handle_at => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
-            libc::SYS_readlinkat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
-            libc::SYS_faccessat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
-            libc::SYS_faccessat2 => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
+            libc::SYS_newfstatat |
+            libc::SYS_statx |
+            libc::SYS_name_to_handle_at |
+            libc::SYS_readlinkat |
+            libc::SYS_faccessat |
+            libc::SYS_faccessat2 |
             libc::SYS_execveat => {
                 let mut ctxt = CTXT.lock().unwrap();
                 let mut sets = SETS.lock().unwrap();
                 parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             // w fd path
-            libc::SYS_linkat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_w_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
-            libc::SYS_unlinkat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
-            libc::SYS_utimensat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
-            libc::SYS_mkdirat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
-            libc::SYS_mknodat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
-            libc::SYS_fchownat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
-            }
+            libc::SYS_linkat |
+            libc::SYS_unlinkat | 
+            libc::SYS_utimensat |
+            libc::SYS_mkdirat |
+            libc::SYS_mknodat |
+            libc::SYS_fchownat |
             libc::SYS_fchmodat => {
                 let mut ctxt = CTXT.lock().unwrap();
                 let mut sets = SETS.lock().unwrap();
@@ -465,11 +401,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
         } => match syscall_nr {
             // libc::SYS_link => {}
             // libc::SYS_rename => {}
-            libc::SYS_renameat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
-                parse_renameat(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path, fd2, &path2)
-            }
+            libc::SYS_renameat |
             libc::SYS_renameat2 => {
                 let mut ctxt = CTXT.lock().unwrap();
                 let mut sets = SETS.lock().unwrap();
