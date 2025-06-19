@@ -154,7 +154,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 #ifdef __NR_inotify_add_watch
 	case __NR_inotify_add_watch:
 		path = (char *)PT_REGS_PARM2_CORE(regs);
-		event_type = SYS_ENTER0;
+		event_type = SYS_ENTER1;
 		break;
 #endif
 #ifdef __NR_execve

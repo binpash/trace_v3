@@ -298,7 +298,6 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
                 let mut sets = SETS.lock().unwrap();
                 parse_clone(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags)
             }
-            libc::SYS_inotify_add_watch => {}
             _ => {}
         },
         SyscallInfo::Event1 {
@@ -309,6 +308,11 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             fd,
             path,
         } => match syscall_nr {
+            libc::SYS_inotify_add_watch => {
+                let mut ctxt = CTXT.lock().unwrap();
+                let mut sets = SETS.lock().unwrap();
+                parse_SYS_inotify_add_watch(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
+            }
             libc::SYS_openat => {
                 let mut ctxt = CTXT.lock().unwrap();
                 let mut sets = SETS.lock().unwrap();
@@ -457,6 +461,15 @@ fn convert_absolute(ctxt: &Context, pid: u64, raw_path: &str, dirfd: Option<i32>
 enum AccessKind {
     Read,
     Write,
+}
+
+fn parse_SYS_inotify_add_watch(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_nr: i64,flags: u32,fd: i32, path: &str){
+    if path.is_empty() {
+        return;
+    }
+    let abs = convert_absolute(ctxt, pid, path, None);
+
+    insert_with_ancestors(sets, abs, AccessKind::Read);
 }
 
 fn parse_openat(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_nr: i64,flags: u32,fd: i32, path: &str) {
