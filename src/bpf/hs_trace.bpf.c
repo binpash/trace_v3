@@ -32,7 +32,7 @@ struct {
 	__type(key, u32);
 	__type(value, u32);
 	__uint(max_entries, 1024);
-} tgid_set SEC(".maps");
+} pid_set SEC(".maps");
 
 enum syscall_event_type {
 	SYS_ENTER0,
@@ -48,16 +48,18 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
          struct task_struct *child)
 {
 	u32 dummy_val = 1;
-	u32 p_tgid = parent->tgid;
-	u32 c_tgid = child->tgid;
-	if (bpf_map_lookup_elem(&tgid_set, &p_tgid) == NULL) {
+	u32 p_pid = parent->pid;
+	u32 c_pid = child->pid;
+	bpf_printk("sched_process_fork called with parent %d and child %d\n", p_pid,
+	           c_pid);
+	if (bpf_map_lookup_elem(&pid_set, &p_pid) == NULL) {
 		return 0;
 	}
-	if (bpf_map_update_elem(&tgid_set, &c_tgid, &dummy_val, BPF_ANY) < 0) {
-		bpf_printk("failed to update tgid set with %d\n", c_tgid);
+	if (bpf_map_update_elem(&pid_set, &c_pid, &dummy_val, BPF_ANY) < 0) {
+		bpf_printk("failed to update pid set with %d\n", c_pid);
 		return 0;
 	}
-	bpf_printk("update tgid set with %d\n", c_tgid);
+	bpf_printk("update pid set with %d\n", c_pid);
 	return 0;
 }
 
@@ -66,12 +68,12 @@ SEC("tp_btf/sched_process_exit")
 int
 BPF_PROG(hs_trace_process_exit, struct task_struct *p)
 {
-	u32 tgid = p->tgid;
-	if (bpf_map_delete_elem(&tgid_set, &tgid) < 0) {
-		bpf_printk("failed to delete %d from tgid set\n", tgid);
+	u32 pid = p->pid;
+	if (bpf_map_delete_elem(&pid_set, &pid) < 0) {
+		bpf_printk("failed to delete %d from pid set\n", pid);
 		return 0;
 	}
-	bpf_printk("remove %d from tgid set\n", tgid);
+	bpf_printk("remove %d from pid set\n", pid);
 	return 0;
 }
 
@@ -81,8 +83,8 @@ int
 BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 {
 	u64 pid_tgid = bpf_get_current_pid_tgid();
-	u32 tgid = pid_tgid >> 32;
-	if (bpf_map_lookup_elem(&tgid_set, &tgid) == NULL) {
+	u32 pid = pid_tgid & 0xFFFFFFFF;
+	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
 		return 0;
 	}
 
@@ -339,8 +341,8 @@ int
 BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 {
 	u64 pid_tgid = bpf_get_current_pid_tgid();
-	u32 tgid = pid_tgid >> 32;
-	if (bpf_map_lookup_elem(&tgid_set, &tgid) == NULL) {
+	u32 pid = pid_tgid & 0xFFFFFFFF;
+	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
 		return 0;
 	}
 

@@ -63,14 +63,14 @@ fn main() -> Result<()> {
         }
     }
 
-    let pid;
+    let target_pid;
     unsafe {
-        pid = libc::fork();
+        target_pid = libc::fork();
     }
-    if pid < 0 {
+    if target_pid < 0 {
         Err(Error::new(ErrorKind::Other, "couldn't fork"))?;
     }
-    if pid == 0 {
+    if target_pid == 0 {
         unsafe {
             // TODO (dan 2025-05-29): Decide whether or not we want to redirect the fd's to /dev/null
             let devnull = open(c"/dev/null".as_ptr(), O_WRONLY);
@@ -90,7 +90,7 @@ fn main() -> Result<()> {
         }
     }
 
-    let pid_tgid = (pid as u64) << 32 | pid as u64;
+    let pid_tgid = (target_pid as u64) << 32 | target_pid as u64;
 
     let cwd = std::env::current_dir()?;
     // NOTE: map for userspace
@@ -110,14 +110,19 @@ fn main() -> Result<()> {
     skel.attach()?;
 
     // update the map
+    let runner_pid = unsafe { libc::getpid() };
+    println!("parent: {runner_pid} child: {target_pid}");
     // TODO: check if native endianness is correct!
-    let pid_buf = &pid.to_ne_bytes();
+    let runner_pid_buf = &runner_pid.to_ne_bytes();
+    let target_pid_buf = &target_pid.to_ne_bytes();
     let dummy_val: i32 = 1;
     let dummy_bytes = &dummy_val.to_ne_bytes();
-    let _ = skel
-        .maps
-        .tgid_set
-        .update(pid_buf, dummy_bytes, MapFlags::ANY)?;
+    skel.maps
+        .pid_set
+        .update(runner_pid_buf, dummy_bytes, MapFlags::ANY)?;
+    skel.maps
+        .pid_set
+        .update(target_pid_buf, dummy_bytes, MapFlags::ANY)?;
 
     // create channel and spawn worker thread
     let (sender, receiver) = mpsc::channel::<Option<SyscallEvent>>();
@@ -148,7 +153,7 @@ fn main() -> Result<()> {
 
     // start the child
     unsafe {
-        kill(pid as i32, SIGUSR1);
+        kill(target_pid as i32, SIGUSR1);
     }
 
     while RUNNING.load(Ordering::Relaxed) {
@@ -159,7 +164,7 @@ fn main() -> Result<()> {
     }
 
     let mut status = MaybeUninit::<c_int>::uninit();
-    unsafe { if waitpid(pid, status.as_mut_ptr(), 0) != pid {} }
+    unsafe { if waitpid(target_pid, status.as_mut_ptr(), 0) != target_pid {} }
 
     // send None to trigger thread to stop
     // TODO: handle all cases
