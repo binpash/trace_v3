@@ -10,9 +10,11 @@ use libc::{
 };
 use std::collections::HashMap;
 use std::ffi::CStr;
+use std::ffi::CString;
 use std::io::{Error, ErrorKind};
 use std::mem::{MaybeUninit, size_of, zeroed};
 use std::os::fd::{AsFd, AsRawFd};
+use std::os::raw::c_char;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
@@ -90,7 +92,16 @@ fn main() -> Result<()> {
             if sigwait(&mut set, &mut sig) != 0 {
                 Err(Error::new(ErrorKind::Other, "couldn't sigwait"))?;
             }
-            let _ = Command::new(args.nth(1).unwrap()).args(args.skip(1)).exec();
+
+            let cstr_args: Vec<CString> = args
+                .skip(1)
+                .map(|s| CString::new(s.as_str()).expect("invalid C string"))
+                .collect();
+
+            let mut argv: Vec<*const c_char> = cstr_args.iter().map(|s| s.as_ptr()).collect();
+            argv.push(std::ptr::null());
+            let prog = &cstr_args[0];
+            libc::execvp(prog.as_ptr(), argv.as_ptr());
         }
     }
 
