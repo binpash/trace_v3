@@ -44,5 +44,5 @@ jobs:
 
       - name: run tests
         run: |
-          ./tests/run-tests.sh
+          sudo ./tests/run-tests.sh
 
