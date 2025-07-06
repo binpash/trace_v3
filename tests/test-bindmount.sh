@@ -5,8 +5,8 @@ PROJ_ROOT="${PROJ_ROOT:-$(git rev-parse --show-toplevel)}"
 TEST="${PROJ_ROOT}"/tests
 TRACE=${TRACE:-$1}
 
-mkdir "${TEST}"/bind1
-mkdir "${TEST}"/bind2
+mkdir -p "${TEST}"/bind1
+mkdir -p "${TEST}"/bind2
 cat >"${TEST}"/bind1/file <<EOF
 Test file
 EOF
@@ -18,3 +18,4 @@ sudo mount --bind "${TEST}"/bind1 "${TEST}"/bind2
 sudo umount "${TEST}"/bind2
 rm "${TEST}"/bind1/*
 rmdir "${TEST}"/bind1
+rmdir "${TEST}"/bind2

@@ -5,7 +5,7 @@ PROJ_ROOT="${PROJ_ROOT:-$(git rev-parse --show-toplevel)}"
 TEST="${PROJ_ROOT}"/tests
 TRACE=${TRACE:-$1}
 
-mkdir "${TEST}"/different
+mkdir -p "${TEST}"/different
 cd "${TEST}"/different
 cat >file1 <<EOF
 Test file 1
