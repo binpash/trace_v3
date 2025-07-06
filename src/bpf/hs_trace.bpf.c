@@ -53,6 +53,7 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 	bpf_printk("sched_process_fork called with parent %d and child %d\n", p_pid,
 	           c_pid);
 	if (bpf_map_lookup_elem(&pid_set, &p_pid) == NULL) {
+		bpf_printk("parent pid %d not in set\n", p_pid);
 		return 0;
 	}
 	if (bpf_map_update_elem(&pid_set, &c_pid, &dummy_val, BPF_ANY) < 0) {
@@ -85,6 +86,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u32 pid = pid_tgid & 0xFFFFFFFF;
 	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
+		bpf_printk("pid %d is not in set\n", pid);
 		return 0;
 	}
 
