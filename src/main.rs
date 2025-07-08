@@ -15,7 +15,6 @@ use std::io::{Error, ErrorKind};
 use std::mem::{MaybeUninit, size_of, zeroed};
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::raw::c_char;
-use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
