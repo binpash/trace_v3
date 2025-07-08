@@ -1,4 +1,8 @@
 use anyhow::Result;
+use libbpf_sys::libbpf_num_possible_cpus;
+use libbpf_sys::{
+    BPF_FUNC_map_lookup_percpu_elem, bpf_map__fd, bpf_map__lookup_elem, bpf_map_lookup_elem,
+};
 use libc::{
     O_WRONLY, SA_NOCLDSTOP, SA_RESTART, SIG_BLOCK, SIGCHLD, SIGUSR1, STDERR_FILENO, STDOUT_FILENO,
     c_int, dup2, kill, open, sigaction, sigaddset, sigemptyset, sighandler_t, sigprocmask,
@@ -9,6 +13,7 @@ use std::ffi::CStr;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
 use std::mem::{MaybeUninit, size_of, zeroed};
+use std::os::fd::{AsFd, AsRawFd};
 use std::os::raw::c_char;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
@@ -17,10 +22,9 @@ use std::ptr;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-
 // use clap::Parser;
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
-use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
+use libbpf_rs::{MapFlags, MapCore, RingBufferBuilder};
 // use plain::Plain;
 // use time::OffsetDateTime;
 // use time::macros::format_description;
@@ -161,18 +165,34 @@ fn main() -> Result<()> {
         return 0;
     })?;
     let rb = rb_builder.build()?;
-
     // start the child
     unsafe {
         kill(target_pid as i32, SIGUSR1);
     }
-
+    let key = 0u32.to_ne_bytes();
+    let mut program_total = 0;
     while RUNNING.load(Ordering::Relaxed) {
         match rb.poll(Duration::from_millis(10)) {
             Ok(()) => {}
             Err(_) => {}
         }
+        if let Some(count_per_cpu) = skel.maps.missed_events.lookup_percpu(&key, MapFlags::ANY)? {
+            let mut total = 0;
+            for missed in count_per_cpu {
+                let slice = &missed[..size_of::<u32>()];
+                let bytes: [u8; 4] = slice
+                    .try_into()
+                    .expect("missed_events entry was not exactly 4 bytes");
+                let count = u32::from_ne_bytes(bytes);
+                total += count;
+            }
+            if total != 0 {
+                println!("{total} missed events in this poll");
+            }
+            program_total += total;
+        };
     }
+    println!("{program_total} missed events during the duration of the program");
 
     let mut status = MaybeUninit::<c_int>::uninit();
     unsafe { if waitpid(target_pid, status.as_mut_ptr(), 0) != target_pid {} }
