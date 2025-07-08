@@ -4,8 +4,8 @@ use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::CStr;
 use std::path::{Component, PathBuf};
-use std::sync::{Mutex, RwLock};
 use std::sync::mpsc;
+use std::sync::{Mutex, RwLock};
 use trace_v3::*;
 #[cfg(target_arch = "x86_64")]
 pub fn individually_handled_syscall_map() -> HashMap<i64, &'static str> {
@@ -155,7 +155,7 @@ pub struct Context {
     cwd_map: HashMap<u64, PathBuf>,
     log: HashMap<u64, VecDeque<SyscallEvent>>,
     process_graph: HashMap<u64, u64>,
-    dirfd_map: HashMap<(u64, i32), PathBuf>
+    dirfd_map: HashMap<(u64, i32), PathBuf>,
 }
 
 impl Context {
@@ -164,7 +164,7 @@ impl Context {
             cwd_map: HashMap::new(),
             log: HashMap::new(),
             process_graph: HashMap::new(),
-            dirfd_map: HashMap::new()
+            dirfd_map: HashMap::new(),
         }
     }
 
@@ -311,7 +311,9 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             libc::SYS_inotify_add_watch => {
                 let mut ctxt = CTXT.lock().unwrap();
                 let mut sets = SETS.lock().unwrap();
-                parse_SYS_inotify_add_watch(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
+                parse_SYS_inotify_add_watch(
+                    &mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path,
+                )
             }
             libc::SYS_openat => {
                 let mut ctxt = CTXT.lock().unwrap();
@@ -337,10 +339,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             }
             // libc::SYS_symlink => {}
             // r path
-            libc::SYS_execve |
-            libc::SYS_statfs |
-            libc::SYS_getxattr |
-            libc::SYS_lgetxattr => {
+            libc::SYS_execve | libc::SYS_statfs | libc::SYS_getxattr | libc::SYS_lgetxattr => {
                 let mut ctxt = CTXT.lock().unwrap();
                 let mut sets = SETS.lock().unwrap();
                 parse_r_first_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
@@ -350,8 +349,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             // libc::SYS_access => {}
             // libc::SYS_readlink => {}
             // w path
-            libc::SYS_truncate |
-            libc::SYS_acct => {
+            libc::SYS_truncate | libc::SYS_acct => {
                 let mut ctxt = CTXT.lock().unwrap();
                 let mut sets = SETS.lock().unwrap();
                 parse_w_first_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
@@ -367,25 +365,25 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             // libc::SYS_mknod => {}
             // libc::SYS_unlink => {}
             // r fd path
-            libc::SYS_newfstatat |
-            libc::SYS_statx |
-            libc::SYS_name_to_handle_at |
-            libc::SYS_readlinkat |
-            libc::SYS_faccessat |
-            libc::SYS_faccessat2 |
-            libc::SYS_execveat => {
+            libc::SYS_newfstatat
+            | libc::SYS_statx
+            | libc::SYS_name_to_handle_at
+            | libc::SYS_readlinkat
+            | libc::SYS_faccessat
+            | libc::SYS_faccessat2
+            | libc::SYS_execveat => {
                 let mut ctxt = CTXT.lock().unwrap();
                 let mut sets = SETS.lock().unwrap();
                 parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             // w fd path
-            libc::SYS_linkat |
-            libc::SYS_unlinkat | 
-            libc::SYS_utimensat |
-            libc::SYS_mkdirat |
-            libc::SYS_mknodat |
-            libc::SYS_fchownat |
-            libc::SYS_fchmodat => {
+            libc::SYS_linkat
+            | libc::SYS_unlinkat
+            | libc::SYS_utimensat
+            | libc::SYS_mkdirat
+            | libc::SYS_mknodat
+            | libc::SYS_fchownat
+            | libc::SYS_fchmodat => {
                 let mut ctxt = CTXT.lock().unwrap();
                 let mut sets = SETS.lock().unwrap();
                 parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
@@ -405,56 +403,58 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
         } => match syscall_nr {
             // libc::SYS_link => {}
             // libc::SYS_rename => {}
-            libc::SYS_renameat |
-            libc::SYS_renameat2 => {
+            libc::SYS_renameat | libc::SYS_renameat2 => {
                 let mut ctxt = CTXT.lock().unwrap();
                 let mut sets = SETS.lock().unwrap();
-                parse_renameat(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path, fd2, &path2)
+                parse_renameat(
+                    &mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path, fd2, &path2,
+                )
             }
             _ => {}
         },
     }
 }
-fn is_absolute_path(path: &str) -> bool{
+fn is_absolute_path(path: &str) -> bool {
     !path.is_empty() && path.starts_with('/')
 }
 
 fn convert_absolute(ctxt: &Context, pid: u64, raw_path: &str, dirfd: Option<i32>) -> PathBuf {
     let binding = if is_absolute_path(raw_path) {
         PathBuf::from(raw_path)
-    } else{
+    } else {
         let base = if let Some(fd) = dirfd {
-            ctxt.dirfd_map.get(&(pid, fd))
+            ctxt.dirfd_map
+                .get(&(pid, fd))
                 .expect("fd or pid not found in map")
                 .clone()
-        }   else{
+        } else {
             ctxt.cwd_map.get(&pid).expect("pid not found").clone()
         };
         base.join(raw_path)
     };
-    let mut path_comps: Vec<Component>= Vec::new();
+    let mut path_comps: Vec<Component> = Vec::new();
 
     for t in binding.components() {
         match t {
             Component::CurDir => {}
-            Component::ParentDir => { 
-                if let Some(last) = path_comps.last(){
-                    if last.clone() != Component::RootDir{
+            Component::ParentDir => {
+                if let Some(last) = path_comps.last() {
+                    if last.clone() != Component::RootDir {
                         path_comps.pop();
                     }
-                } 
-            },
-            other => {path_comps.push(other);}
-
+                }
+            }
+            other => {
+                path_comps.push(other);
+            }
         };
-    };
+    }
 
     let mut final_abs = PathBuf::new();
     for comp in path_comps.iter() {
         final_abs.push(comp.as_os_str());
-    };
+    }
     final_abs
-
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -463,7 +463,16 @@ enum AccessKind {
     Write,
 }
 
-fn parse_SYS_inotify_add_watch(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_nr: i64,flags: u32,fd: i32, path: &str){
+fn parse_SYS_inotify_add_watch(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    syscall_nr: i64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+) {
     if path.is_empty() {
         return;
     }
@@ -472,10 +481,18 @@ fn parse_SYS_inotify_add_watch(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,r
     insert_with_ancestors(sets, abs, AccessKind::Read);
 }
 
-fn parse_openat(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_nr: i64,flags: u32,fd: i32, path: &str) {
-    
+fn parse_openat(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    syscall_nr: i64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+) {
     let abs = convert_absolute(&ctxt, pid, &path, Some(fd));
-    
+
     if ret >= 0 && (flags & libc::O_DIRECTORY as u32) != 0 {
         ctxt.dirfd_map.insert((pid, ret as i32), abs.clone());
     }
@@ -490,12 +507,21 @@ fn parse_openat(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall
     insert_with_ancestors(sets, abs, kind);
 }
 
-fn parse_open(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_nr: i64,flags: u32,fd: i32, path: &str) {
+fn parse_open(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    syscall_nr: i64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+) {
     let abs = convert_absolute(&ctxt, pid, &path, None);
     if ret >= 0 && (flags & libc::O_DIRECTORY as u32) != 0 {
         ctxt.dirfd_map.insert((pid, ret as i32), abs.clone());
     }
-    
+
     let kind = if ret < 0 {
         AccessKind::Read
     } else if (flags & libc::O_RDONLY as u32) != 0 {
@@ -506,16 +532,32 @@ fn parse_open(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_n
     insert_with_ancestors(sets, abs, kind);
 }
 
-fn parse_chdir(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_nr: i64,flags: u32,fd: i32, path: &str) {
+fn parse_chdir(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    syscall_nr: i64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+) {
     let abs = convert_absolute(ctxt, pid, &path, None);
-    if ret == 0{
+    if ret == 0 {
         ctxt.cwd_map.insert(pid, abs.clone());
     }
     insert_with_ancestors(sets, abs, AccessKind::Read);
 }
 
-fn parse_clone(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_nr: i64,flags: u32) {
-    if ret < 0{
+fn parse_clone(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    syscall_nr: i64,
+    flags: u32,
+) {
+    if ret < 0 {
         return;
     };
     if (flags & libc::CLONE_FS as u32) != 0 {
@@ -523,28 +565,54 @@ fn parse_clone(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_
     }
 }
 
-fn parse_symlinkat(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_nr: i64,flags: u32,fd: i32, path: &str) {
+fn parse_symlinkat(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    syscall_nr: i64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+) {
     let abs = convert_absolute(ctxt, pid, &path, Some(fd));
     let kind = if ret != 0 {
         AccessKind::Read
-    } else{
+    } else {
         AccessKind::Write
     };
 
     insert_with_ancestors(sets, abs, kind);
 }
 
-fn parse_r_first_path_e1(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_nr: i64,flags: u32,fd: i32, path: &str) {
+fn parse_r_first_path_e1(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    syscall_nr: i64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+) {
     if path.is_empty() {
         return;
     }
     let abs = convert_absolute(ctxt, pid, &path, None);
 
     insert_with_ancestors(sets, abs, AccessKind::Read);
-
 }
 
-fn parse_w_first_path_e1(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_nr: i64,flags: u32,fd: i32, path: &str) {
+fn parse_w_first_path_e1(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    syscall_nr: i64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+) {
     if path.is_empty() {
         return;
     }
@@ -552,15 +620,23 @@ fn parse_w_first_path_e1(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i6
     let abs = convert_absolute(ctxt, pid, path, None);
     let kind = if ret == 0 {
         AccessKind::Write
-    } else{
+    } else {
         AccessKind::Read
     };
 
     insert_with_ancestors(sets, abs, kind);
-
 }
 
-fn parse_r_fd_path_e1(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_nr: i64,flags: u32,fd: i32, path: &str) {
+fn parse_r_fd_path_e1(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    syscall_nr: i64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+) {
     if path.is_empty() {
         return;
     }
@@ -570,7 +646,16 @@ fn parse_r_fd_path_e1(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,s
     insert_with_ancestors(sets, abs, AccessKind::Read);
 }
 
-fn parse_w_fd_path_e1(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_nr: i64,flags: u32,fd: i32, path: &str) {
+fn parse_w_fd_path_e1(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    syscall_nr: i64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+) {
     if path.is_empty() {
         return;
     }
@@ -583,19 +668,26 @@ fn parse_w_fd_path_e1(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,s
         AccessKind::Write
     };
 
-
     insert_with_ancestors(sets, abs, kind);
 }
 
-fn parse_renameat(ctxt: &mut Context, sets: &mut RWSet, pid: u64 ,ret: i64,syscall_nr: i64,flags: u32,fd: i32, path: &str, fd2: i32, path2: &str){
+fn parse_renameat(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    syscall_nr: i64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+    fd2: i32,
+    path2: &str,
+) {
     let abs_path_1 = convert_absolute(ctxt, pid, path, Some(fd));
     let abs_path_2 = convert_absolute(ctxt, pid, path2, Some(fd2));
 
     insert_with_ancestors(sets, abs_path_1, AccessKind::Write);
     insert_with_ancestors(sets, abs_path_2, AccessKind::Write);
-
-
-
 }
 
 fn insert_with_ancestors(sets: &mut RWSet, p: PathBuf, kind: AccessKind) {
@@ -614,8 +706,6 @@ fn insert_with_ancestors(sets: &mut RWSet, p: PathBuf, kind: AccessKind) {
         }
     }
 }
-
-
 
 pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<()> {
     loop {
