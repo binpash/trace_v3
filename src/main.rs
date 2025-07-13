@@ -41,7 +41,7 @@ use hs_trace::*;
 use trace_v3::*;
 
 mod dep_tracer;
-use crate::dep_tracer::CTXT;
+use crate::dep_tracer::{CTXT, LOGS, SETS};
 use crate::dep_tracer::SyscallEvent;
 use crate::dep_tracer::event_stream_handler;
 
@@ -109,8 +109,14 @@ fn main() -> Result<()> {
 
     let cwd = std::env::current_dir()?;
     // NOTE: map for userspace
-    let mut pid_cwd_map = HashMap::<u64, PathBuf>::new();
-    pid_cwd_map.insert(pid_tgid, cwd.clone());
+    // let mut pid_cwd_map = HashMap::<u64, PathBuf>::new();
+    // pid_cwd_map.insert(pid_tgid, cwd.clone());
+    {
+        let mut ctxt = CTXT.lock().unwrap();
+        ctxt.init_pid(pid_tgid, cwd.clone());
+        // Also initialize with just the pid (lower 32 bits) since some events might use that
+        ctxt.init_pid(target_pid as u64, cwd.clone());
+    }
 
     let skel_builder = HsTraceSkelBuilder::default();
     // if opts.verbose {
@@ -205,8 +211,11 @@ fn main() -> Result<()> {
     }
     let _ = stream_handler.join();
 
-    let mut ctxt = CTXT.lock().unwrap();
-    ctxt.dump_log();
+    let mut logs = LOGS.lock().unwrap();
+    logs.dump_log();
 
+    let mut sets = SETS.lock().unwrap();
+    
+    sets.dump_sets();
     Ok(())
 }

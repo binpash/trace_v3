@@ -150,24 +150,16 @@ pub enum SyscallEvent {
     Enter2(sys_enter_info2_t),
     Exit(sys_exit_info_t),
 }
-
-pub struct Context {
-    cwd_map: HashMap<u64, PathBuf>,
+pub struct Logs {
     log: HashMap<u64, VecDeque<SyscallEvent>>,
-    process_graph: HashMap<u64, u64>,
-    dirfd_map: HashMap<(u64, i32), PathBuf>,
 }
 
-impl Context {
-    pub fn new() -> Context {
-        Context {
-            cwd_map: HashMap::new(),
-            log: HashMap::new(),
-            process_graph: HashMap::new(),
-            dirfd_map: HashMap::new(),
+impl Logs {
+    pub fn new() -> Logs {
+        Logs{
+            log: HashMap::new()
         }
     }
-
     pub fn update_log(&mut self, pid_tgid: u64, event: SyscallEvent) {
         self.log
             .entry(pid_tgid)
@@ -218,6 +210,27 @@ impl Context {
         }
     }
 
+}
+
+
+pub struct Context {
+    cwd_map: HashMap<u64, PathBuf>,
+    process_graph: HashMap<u64, u64>,
+    dirfd_map: HashMap<(u64, i32), PathBuf>,
+}
+
+impl Context {
+    pub fn new() -> Context {
+        Context {
+            cwd_map: HashMap::new(),
+            process_graph: HashMap::new(),
+            dirfd_map: HashMap::new(),
+        }
+    }
+    pub fn init_pid(&mut self, pid: u64, cwd: PathBuf) {
+        self.cwd_map.insert(pid, cwd);
+    }
+
     pub fn do_clone(&mut self, parent_pid_tgid: u64, child_pid_tgid: u64) -> () {
         self.process_graph.insert(child_pid_tgid, parent_pid_tgid);
         let parent_cwd = self.cwd_map.get(&parent_pid_tgid).unwrap();
@@ -253,11 +266,19 @@ impl RWSet {
         }
         v
     }
+
+    pub fn dump_sets(&mut self) {
+        let rset = &self.read_set;
+        let wset = &self.write_set;
+        println!("{rset:#?}");
+        println!("{wset:#?}");
+
+    }
 }
 
 pub static CTXT: Lazy<Mutex<Context>> = Lazy::new(|| Mutex::new(Context::new()));
 pub static SETS: Lazy<Mutex<RWSet>> = Lazy::new(|| Mutex::new(RWSet::new()));
-
+pub static LOGS: Lazy<Mutex<Logs>> = Lazy::new(|| Mutex::new(Logs::new()));
 enum SyscallInfo {
     Event0 {
         pid: u64,
@@ -286,6 +307,8 @@ enum SyscallInfo {
 }
 
 fn on_event_update_rw_sets(event: SyscallInfo) {
+    let mut ctxt = CTXT.lock().unwrap();
+    let mut sets = SETS.lock().unwrap();
     match event {
         SyscallInfo::Event0 {
             pid,
@@ -294,8 +317,6 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             flags,
         } => match syscall_nr {
             libc::SYS_clone => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
                 parse_clone(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags)
             }
             _ => {}
@@ -309,15 +330,13 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             path,
         } => match syscall_nr {
             libc::SYS_inotify_add_watch => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
+                 
                 parse_SYS_inotify_add_watch(
                     &mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path,
                 )
             }
             libc::SYS_openat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
+                 
                 parse_openat(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
 
@@ -328,20 +347,17 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             //     parse_open(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             // }
             libc::SYS_chdir => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
+                 
                 parse_chdir(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             libc::SYS_symlinkat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
+                 
                 parse_symlinkat(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             // libc::SYS_symlink => {}
             // r path
             libc::SYS_execve | libc::SYS_statfs | libc::SYS_getxattr | libc::SYS_lgetxattr => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
+                 
                 parse_r_first_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             // libc::SYS_stat => {}
@@ -350,8 +366,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             // libc::SYS_readlink => {}
             // w path
             libc::SYS_truncate | libc::SYS_acct => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
+                 
                 parse_w_first_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             // libc::SYS_mkdir => {}
@@ -372,8 +387,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             | libc::SYS_faccessat
             | libc::SYS_faccessat2
             | libc::SYS_execveat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
+                 
                 parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             // w fd path
@@ -384,8 +398,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             | libc::SYS_mknodat
             | libc::SYS_fchownat
             | libc::SYS_fchmodat => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
+                 
                 parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             // libc::SYS_futimeat => {}
@@ -404,8 +417,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             // libc::SYS_link => {}
             // libc::SYS_rename => {}
             libc::SYS_renameat | libc::SYS_renameat2 => {
-                let mut ctxt = CTXT.lock().unwrap();
-                let mut sets = SETS.lock().unwrap();
+                 
                 parse_renameat(
                     &mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path, fd2, &path2,
                 )
@@ -423,10 +435,15 @@ fn convert_absolute(ctxt: &Context, pid: u64, raw_path: &str, dirfd: Option<i32>
         PathBuf::from(raw_path)
     } else {
         let base = if let Some(fd) = dirfd {
-            ctxt.dirfd_map
-                .get(&(pid, fd))
-                .expect("fd or pid not found in map")
-                .clone()
+            if fd == libc::AT_FDCWD{
+                ctxt.cwd_map.get(&pid).expect("pid not found bc pid not in cwd").clone()
+            } else{
+
+                ctxt.dirfd_map
+                    .get(&(pid, fd))
+                    .expect("fd or pid not found in map")
+                    .clone()
+            }
         } else {
             ctxt.cwd_map.get(&pid).expect("pid not found").clone()
         };
@@ -560,9 +577,7 @@ fn parse_clone(
     if ret < 0 {
         return;
     };
-    if (flags & libc::CLONE_FS as u32) != 0 {
-        ctxt.do_clone(pid, ret as u64)
-    }
+    ctxt.do_clone(pid, ret as u64)
 }
 
 fn parse_symlinkat(
@@ -712,24 +727,24 @@ pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<
         match rx.recv() {
             Ok(Some(SyscallEvent::Enter0(e))) => {
                 let pid = e.pid as u64;
-                let mut ctxt = CTXT.lock().unwrap();
-                ctxt.update_log(pid, SyscallEvent::Enter0(e))
+                let mut logs = LOGS.lock().unwrap();
+                logs.update_log(pid, SyscallEvent::Enter0(e))
             }
             Ok(Some(SyscallEvent::Enter1(e))) => {
                 let pid = e.pid as u64;
-                let mut ctxt = CTXT.lock().unwrap();
-                ctxt.update_log(pid, SyscallEvent::Enter1(e))
+                let mut logs = LOGS.lock().unwrap();
+                logs.update_log(pid, SyscallEvent::Enter1(e))
             }
             Ok(Some(SyscallEvent::Enter2(e))) => {
                 let pid = e.pid as u64;
-                let mut ctxt = CTXT.lock().unwrap();
-                ctxt.update_log(pid, SyscallEvent::Enter2(e))
+                let mut logs = LOGS.lock().unwrap();
+                logs.update_log(pid, SyscallEvent::Enter2(e))
             }
             Ok(Some(SyscallEvent::Exit(exit_info))) => {
                 let pid = exit_info.pid as u64;
-                let mut ctxt = CTXT.lock().unwrap();
-                ctxt.update_log(pid, SyscallEvent::Exit(exit_info));
-                let event_queue = ctxt.log.get(&pid).unwrap();
+                let mut logs = LOGS.lock().unwrap();
+                logs.update_log(pid, SyscallEvent::Exit(exit_info));
+                let event_queue = logs.log.get(&pid).unwrap();
                 let len = event_queue.len();
                 if len >= 2 {
                     let enter_event = &event_queue[len - 2];
