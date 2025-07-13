@@ -138,9 +138,9 @@ fn main() -> Result<()> {
     let target_pid_buf = &target_pid.to_ne_bytes();
     let dummy_val: i32 = 1;
     let dummy_bytes = &dummy_val.to_ne_bytes();
-    skel.maps
-        .pid_set
-        .update(runner_pid_buf, dummy_bytes, MapFlags::ANY)?;
+    // skel.maps
+    //     .pid_set
+    //     .update(runner_pid_buf, dummy_bytes, MapFlags::ANY)?;
     skel.maps
         .pid_set
         .update(target_pid_buf, dummy_bytes, MapFlags::ANY)?;
