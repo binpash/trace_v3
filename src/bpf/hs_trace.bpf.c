@@ -56,6 +56,9 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 	u32 dummy_val = 1;
 	u32 p_pid = parent->pid;
 	u32 c_pid = child->pid;
+	u64 p_pid_tgid = ((u64)p_pid << 32) | p_pid;  
+	u64 c_pid_tgid = ((u64)c_pid << 32) | c_pid;  
+
 	bpf_printk("sched_process_fork called with parent %d and child %d\n", p_pid,
 	           c_pid);
 	if (bpf_map_lookup_elem(&pid_set, &p_pid) == NULL) {
@@ -67,7 +70,42 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 		return 0;
 	}
 	bpf_printk("update pid set with %d\n", c_pid);
+
+	struct sys_enter_info0_t *enter0;
+	if ((enter0 = bpf_ringbuf_reserve(
+				 &output, sizeof(struct sys_enter_info0_t), 0)) == NULL) {
+			bpf_printk("FAILED to reserve space in ring buffer for event_type == SYS_ENTER0\n");
+			bpf_printk("FAILED to reserve space in ring buffer for event_type == SYS_ENTER1\n");
+			u32 key = 0;
+			u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+			if(missed) {
+				__sync_fetch_and_add(missed, 1);
+			}
+			
+			return 0;
+		}
+	enter0->pid = p_pid_tgid;
+	enter0->syscall_nr = __NR_clone;
+	enter0->flags = 0;
+	bpf_ringbuf_submit(enter0, 0);
+
+	struct sys_exit_info_t *exit;
+	if ((exit = bpf_ringbuf_reserve(&output, sizeof(struct sys_exit_info_t),
+	                                0)) == NULL) {
+		bpf_printk("FAILED to reserve space in ring buffer for event_type == SYS_ENTER1\n");
+			u32 key = 0;
+			u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+			if(missed) {
+				__sync_fetch_and_add(missed, 1);
+			}
+			
+		return 0;
+	}
+	exit->pid = p_pid_tgid;
+	exit->ret = c_pid_tgid;
+	bpf_ringbuf_submit(exit, 0);
 	return 0;
+
 }
 
 SEC("tp_btf/sched_process_exit")
