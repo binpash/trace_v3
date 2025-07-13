@@ -411,10 +411,10 @@ def main(fname):
         read_set, write_set = parse_and_gather_cmd_rw_sets(f.readlines(), ctx)
 
     print("Read set:")
-    for fname in read_set:
+    for fname in sorted(read_set):
         print(fname)
     print("Write set:")
-    for fname in write_set:
+    for fname in sorted(write_set):
         print(fname)
 
 
