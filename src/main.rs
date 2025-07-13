@@ -24,7 +24,7 @@ use std::thread;
 use std::time::Duration;
 // use clap::Parser;
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
-use libbpf_rs::{MapFlags, MapCore, RingBufferBuilder};
+use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
 // use plain::Plain;
 // use time::OffsetDateTime;
 // use time::macros::format_description;
@@ -41,9 +41,9 @@ use hs_trace::*;
 use trace_v3::*;
 
 mod dep_tracer;
-use crate::dep_tracer::{CTXT, LOGS, SETS};
 use crate::dep_tracer::SyscallEvent;
 use crate::dep_tracer::event_stream_handler;
+use crate::dep_tracer::{CTXT, LOGS, SETS};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 static RUNNING: AtomicBool = AtomicBool::new(true);
@@ -215,7 +215,7 @@ fn main() -> Result<()> {
     logs.dump_log();
 
     let mut sets = SETS.lock().unwrap();
-    
+
     sets.dump_sets();
     Ok(())
 }

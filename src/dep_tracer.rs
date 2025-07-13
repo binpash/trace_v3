@@ -156,8 +156,8 @@ pub struct Logs {
 
 impl Logs {
     pub fn new() -> Logs {
-        Logs{
-            log: HashMap::new()
+        Logs {
+            log: HashMap::new(),
         }
     }
     pub fn update_log(&mut self, pid_tgid: u64, event: SyscallEvent) {
@@ -209,9 +209,7 @@ impl Logs {
             }
         }
     }
-
 }
-
 
 pub struct Context {
     cwd_map: HashMap<u64, PathBuf>,
@@ -270,9 +268,11 @@ impl RWSet {
     pub fn dump_sets(&mut self) {
         let rset = &self.read_set;
         let wset = &self.write_set;
+        println!("Read set");
         println!("{rset:#?}");
-        println!("{wset:#?}");
 
+        println!("\nWrite set");
+        println!("{wset:#?}");
     }
 }
 
@@ -316,9 +316,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             syscall_nr,
             flags,
         } => match syscall_nr {
-            libc::SYS_clone => {
-                parse_clone(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags)
-            }
+            libc::SYS_clone => parse_clone(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags),
             _ => {}
         },
         SyscallInfo::Event1 {
@@ -329,14 +327,10 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             fd,
             path,
         } => match syscall_nr {
-            libc::SYS_inotify_add_watch => {
-                 
-                parse_SYS_inotify_add_watch(
-                    &mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path,
-                )
-            }
+            libc::SYS_inotify_add_watch => parse_SYS_inotify_add_watch(
+                &mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path,
+            ),
             libc::SYS_openat => {
-                 
                 parse_openat(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
 
@@ -347,17 +341,14 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             //     parse_open(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             // }
             libc::SYS_chdir => {
-                 
                 parse_chdir(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             libc::SYS_symlinkat => {
-                 
                 parse_symlinkat(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             // libc::SYS_symlink => {}
             // r path
             libc::SYS_execve | libc::SYS_statfs | libc::SYS_getxattr | libc::SYS_lgetxattr => {
-                 
                 parse_r_first_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             // libc::SYS_stat => {}
@@ -366,7 +357,6 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             // libc::SYS_readlink => {}
             // w path
             libc::SYS_truncate | libc::SYS_acct => {
-                 
                 parse_w_first_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             // libc::SYS_mkdir => {}
@@ -387,7 +377,6 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             | libc::SYS_faccessat
             | libc::SYS_faccessat2
             | libc::SYS_execveat => {
-                 
                 parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             // w fd path
@@ -398,7 +387,6 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             | libc::SYS_mknodat
             | libc::SYS_fchownat
             | libc::SYS_fchmodat => {
-                 
                 parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             // libc::SYS_futimeat => {}
@@ -416,12 +404,9 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
         } => match syscall_nr {
             // libc::SYS_link => {}
             // libc::SYS_rename => {}
-            libc::SYS_renameat | libc::SYS_renameat2 => {
-                 
-                parse_renameat(
-                    &mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path, fd2, &path2,
-                )
-            }
+            libc::SYS_renameat | libc::SYS_renameat2 => parse_renameat(
+                &mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path, fd2, &path2,
+            ),
             _ => {}
         },
     }
@@ -435,10 +420,12 @@ fn convert_absolute(ctxt: &Context, pid: u64, raw_path: &str, dirfd: Option<i32>
         PathBuf::from(raw_path)
     } else {
         let base = if let Some(fd) = dirfd {
-            if fd == libc::AT_FDCWD{
-                ctxt.cwd_map.get(&pid).expect("pid not found bc pid not in cwd").clone()
-            } else{
-
+            if fd == libc::AT_FDCWD {
+                ctxt.cwd_map
+                    .get(&pid)
+                    .expect("pid not found bc pid not in cwd")
+                    .clone()
+            } else {
                 ctxt.dirfd_map
                     .get(&(pid, fd))
                     .expect("fd or pid not found in map")

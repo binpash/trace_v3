@@ -75,7 +75,7 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 	if ((enter0 = bpf_ringbuf_reserve(
 				 &output, sizeof(struct sys_enter_info0_t), 0)) == NULL) {
 			bpf_printk("FAILED to reserve space in ring buffer for event_type == SYS_ENTER0\n");
-			bpf_printk("FAILED to reserve space in ring buffer for event_type == SYS_ENTER1\n");
+
 			u32 key = 0;
 			u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
 			if(missed) {
