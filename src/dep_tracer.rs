@@ -269,10 +269,18 @@ impl RWSet {
         let rset = &self.read_set;
         let wset = &self.write_set;
         println!("Read set");
-        println!("{rset:#?}");
+        let mut r = Vec::from_iter(rset);
+        r.sort();
+        for p in r {
+            println!("{p:?}")
+        }
 
-        println!("\nWrite set");
-        println!("{wset:#?}");
+        println!("Write set");
+        let mut w = Vec::from_iter(wset);
+        w.sort();
+        for p in w {
+            println!("{p:?}")
+        }
     }
 }
 
