@@ -14,11 +14,12 @@ struct {
 } output SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __type(key, u32);
-    __type(value, u32);
-    __uint(max_entries, 1);
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__type(key, u32);
+	__type(value, u32);
+	__uint(max_entries, 1);
 } missed_events SEC(".maps");
+
 // struct {
 // 	__uint(type, BPF_MAP_TYPE_HASH);
 // 	__type(key, struct unique_file_t);
@@ -54,15 +55,15 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
          struct task_struct *child)
 {
 	u32 dummy_val = 1;
-	u32 p_pid = parent->pid;
-	u32 c_pid = child->pid;
-	u64 p_pid_tgid = ((u64)p_pid << 32) | p_pid;  
-	u64 c_pid_tgid = ((u64)c_pid << 32) | c_pid;  
+	u64 p_pid = parent->pid;
+	u64 c_pid = child->pid;
+	u64 p_pid_tgid = (p_pid << 32) | p_pid;
+	u64 c_pid_tgid = (c_pid << 32) | c_pid;
 
-	bpf_printk("sched_process_fork called with parent %d and child %d\n", p_pid,
-	           c_pid);
+	// bpf_printk("sched_process_fork called with parent %d and child %d\n",
+	//            p_pid, c_pid);
 	if (bpf_map_lookup_elem(&pid_set, &p_pid) == NULL) {
-		bpf_printk("parent pid %d not in set\n", p_pid);
+		// bpf_printk("parent pid %d not in set\n", p_pid);
 		return 0;
 	}
 	if (bpf_map_update_elem(&pid_set, &c_pid, &dummy_val, BPF_ANY) < 0) {
@@ -73,17 +74,17 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 
 	struct sys_enter_info0_t *enter0;
 	if ((enter0 = bpf_ringbuf_reserve(
-				 &output, sizeof(struct sys_enter_info0_t), 0)) == NULL) {
-			bpf_printk("FAILED to reserve space in ring buffer for event_type == SYS_ENTER0\n");
-
-			u32 key = 0;
-			u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
-			if(missed) {
-				__sync_fetch_and_add(missed, 1);
-			}
-			
-			return 0;
+		 &output, sizeof(struct sys_enter_info0_t), 0)) == NULL) {
+		// bpf_printk(
+		//     "FAILED to reserve space in ring buffer for event_type ==
+		//     " "SYS_ENTER0\n");
+		u32 key = 0;
+		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		if (missed) {
+			__sync_fetch_and_add(missed, 1);
 		}
+		return 0;
+	}
 	enter0->pid = p_pid_tgid;
 	enter0->syscall_nr = __NR_clone;
 	enter0->flags = 0;
@@ -92,20 +93,21 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 	struct sys_exit_info_t *exit;
 	if ((exit = bpf_ringbuf_reserve(&output, sizeof(struct sys_exit_info_t),
 	                                0)) == NULL) {
-		bpf_printk("FAILED to reserve space in ring buffer for event_type == SYS_ENTER1\n");
-			u32 key = 0;
-			u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
-			if(missed) {
-				__sync_fetch_and_add(missed, 1);
-			}
-			
+		// bpf_printk(
+		//     "FAILED to reserve space in ring buffer for event_type ==
+		//     " "SYS_EXIT\n");
+		u32 key = 0;
+		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		if (missed) {
+			__sync_fetch_and_add(missed, 1);
+		}
+
 		return 0;
 	}
 	exit->pid = p_pid_tgid;
 	exit->ret = c_pid_tgid;
 	bpf_ringbuf_submit(exit, 0);
 	return 0;
-
 }
 
 SEC("tp_btf/sched_process_exit")
@@ -118,7 +120,7 @@ BPF_PROG(hs_trace_process_exit, struct task_struct *p)
 		bpf_printk("failed to delete %d from pid set\n", pid);
 		return 0;
 	}
-	bpf_printk("remove %d from pid set\n", pid);
+	bpf_printk("removed %d from pid set\n", pid);
 	return 0;
 }
 
@@ -130,7 +132,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u32 pid = pid_tgid & 0xFFFFFFFF;
 	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
-		bpf_printk("pid %d is not in set\n", pid);
+		// bpf_printk("pid %d is not in set\n", pid);
 		return 0;
 	}
 
@@ -173,15 +175,16 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 #ifdef __NR_symlink
 	case __NR_symlink:
 #endif
-		// NOTE: symlink only incurs a dependency for the symlink file itself
+		// NOTE: symlink only incurs a dependency for the symlink file
+		// itself
 		path = (char *)PT_REGS_PARM2_CORE(regs);
 		event_type = SYS_ENTER1;
 		break;
 #ifdef __NR_link
 	case __NR_link:
 #endif
-		// NOTE: link incurs a dependency on both the original path and the new
-		// path for the inode
+		// NOTE: link incurs a dependency on both the original path and
+		// the new path for the inode
 		path = (char *)PT_REGS_PARM1_CORE(regs);
 		path2 = (char *)PT_REGS_PARM2_CORE(regs);
 		event_type = SYS_ENTER2;
@@ -334,7 +337,8 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		event_type = SYS_ENTER1;
 		break;
 	default:
-		// bpf_printk("ignoring sys_enter event for syscall %ld\n", syscall_id);
+		// bpf_printk("ignoring sys_enter event for syscall %ld\n",
+		// syscall_id);
 		return 0;
 	}
 
@@ -345,14 +349,18 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	struct sys_enter_info2_t *enter2;
 	if (event_type == SYS_ENTER0) {
 		if ((enter0 = bpf_ringbuf_reserve(
-				 &output, sizeof(struct sys_enter_info0_t), 0)) == NULL) {
-			bpf_printk("FAILED to reserve space in ring buffer for event_type == SYS_ENTER0\n");
+			 &output, sizeof(struct sys_enter_info0_t), 0)) ==
+		    NULL) {
+			// bpf_printk("FAILED to reserve space in ring buffer
+			// for "
+			//            "event_type == "
+			//            "SYS_ENTER0\n");
 			u32 key = 0;
 			u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
-			if(missed) {
+			if (missed) {
 				__sync_fetch_and_add(missed, 1);
 			}
-			
+
 			return 0;
 		}
 		enter0->pid = pid_tgid;
@@ -361,32 +369,41 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		bpf_ringbuf_submit(enter0, 0);
 	} else if (event_type == SYS_ENTER1) {
 		if ((enter1 = bpf_ringbuf_reserve(
-				 &output, sizeof(struct sys_enter_info1_t), 0)) == NULL) {
-			bpf_printk("FAILED to reserve space in ring buffer for event_type == SYS_ENTER1\n");
+			 &output, sizeof(struct sys_enter_info1_t), 0)) ==
+		    NULL) {
+			// bpf_printk("FAILED to reserve space in ring buffer
+			// for "
+			//            "event_type == "
+			//            "SYS_ENTER1\n");
 			u32 key = 0;
 			u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
-			if(missed) {
+			if (missed) {
 				__sync_fetch_and_add(missed, 1);
 			}
-			
+
 			return 0;
 		}
 		enter1->pid = pid_tgid;
 		enter1->syscall_nr = syscall_id;
 		enter1->flags = flags;
 		enter1->fd = fd;
-		bpf_probe_read_user_str(&enter1->path, sizeof(enter1->path), path);
+		bpf_probe_read_user_str(&enter1->path, sizeof(enter1->path),
+		                        path);
 		bpf_ringbuf_submit(enter1, 0);
 	} else if (event_type == SYS_ENTER2) {
 		if ((enter2 = bpf_ringbuf_reserve(
-				 &output, sizeof(struct sys_enter_info2_t), 0)) == NULL) {
-			bpf_printk("FAILED to reserve space in ring buffer for event_type == SYS_ENTER1\n");
+			 &output, sizeof(struct sys_enter_info2_t), 0)) ==
+		    NULL) {
+			// bpf_printk("FAILED to reserve space in ring buffer
+			// for "
+			//            "event_type == "
+			//            "SYS_ENTER2\n");
 			u32 key = 0;
 			u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
-			if(missed) {
+			if (missed) {
 				__sync_fetch_and_add(missed, 1);
 			}
-			
+
 			return 0;
 		}
 		enter2->pid = pid_tgid;
@@ -394,8 +411,10 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		enter2->flags = flags;
 		enter2->fd = fd;
 		enter2->fd2 = fd2;
-		bpf_probe_read_user_str(&enter2->path, sizeof(enter2->path), path);
-		bpf_probe_read_user_str(&enter2->path2, sizeof(enter2->path2), path2);
+		bpf_probe_read_user_str(&enter2->path, sizeof(enter2->path),
+		                        path);
+		bpf_probe_read_user_str(&enter2->path2, sizeof(enter2->path2),
+		                        path2);
 		bpf_ringbuf_submit(enter2, 0);
 	}
 
@@ -567,13 +586,15 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 	struct sys_exit_info_t *exit;
 	if ((exit = bpf_ringbuf_reserve(&output, sizeof(struct sys_exit_info_t),
 	                                0)) == NULL) {
-		bpf_printk("FAILED to reserve space in ring buffer for event_type == SYS_ENTER1\n");
-			u32 key = 0;
-			u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
-			if(missed) {
-				__sync_fetch_and_add(missed, 1);
-			}
-			
+		// bpf_printk(
+		//     "FAILED to reserve space in ring buffer for event_type ==
+		//     " "SYS_EXIT\n");
+		u32 key = 0;
+		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		if (missed) {
+			__sync_fetch_and_add(missed, 1);
+		}
+
 		return 0;
 	}
 	exit->pid = pid_tgid;
