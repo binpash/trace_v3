@@ -163,8 +163,8 @@ impl Logs {
     pub fn update_log(&mut self, pid_tgid: u64, event: SyscallEvent) {
         self.log
             .entry(pid_tgid)
-            .and_modify(|vd| vd.push_back(event))
-            .or_insert(VecDeque::new());
+            .or_insert_with(|| VecDeque::new())
+            .push_back(event);
     }
 
     pub fn dump_log(&mut self) {
