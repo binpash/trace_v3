@@ -421,23 +421,27 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	return 0;
 }
 
-SEC("tp_btf/sys_exit")
+struct sys_exit_args {
+	unsigned short common_type;
+	unsigned char common_flags;
+	unsigned char common_preempt_count;
+	int common_pid;
+	long id;  // syscall number
+	long ret; // return value
+};
+
+SEC("tracepoint/raw_syscalls/sys_exit")
 
 int
-BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
+BPF_PROG(hs_trace_sys_exit)
 {
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u32 pid = pid_tgid & 0xFFFFFFFF;
 	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
 		return 0;
 	}
+	long syscall_id = ((struct sys_exit_args *)ctx)->id;
 
-	// TODO (dan 2025-05-27): figure out if these macros are correct!
-#ifdef __aarch64__
-	long syscall_id = regs->syscallno;
-#elifdef __x86_64__
-	long syscall_id = regs->orig_ax;
-#endif
 	// bpf_printk("sys_exit event for syscall %ld\n", syscall_id);
 
 	switch (syscall_id) {
@@ -598,7 +602,7 @@ BPF_PROG(hs_trace_sys_exit, struct pt_regs *regs, long ret)
 		return 0;
 	}
 	exit->pid = pid_tgid;
-	exit->ret = ret;
+	exit->ret = ((struct sys_exit_args *)ctx)->ret;
 	bpf_ringbuf_submit(exit, 0);
 
 	return 0;
