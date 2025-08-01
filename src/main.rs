@@ -78,11 +78,6 @@ fn main() -> Result<()> {
     }
     if target_pid == 0 {
         unsafe {
-            // TODO (dan 2025-05-29): Decide whether or not we want to redirect the fd's to /dev/null
-            let devnull = open(c"/dev/null".as_ptr(), O_WRONLY);
-            dup2(devnull, STDOUT_FILENO);
-            dup2(devnull, STDERR_FILENO);
-
             let mut set: sigset_t = zeroed();
             sigemptyset(&mut set);
             sigaddset(&mut set, SIGUSR1);
