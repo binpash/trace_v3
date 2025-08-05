@@ -111,6 +111,12 @@ fn main() -> Result<()> {
         ctxt.init_pid(pid_tgid, cwd.clone());
         // Also initialize with just the pid (lower 32 bits) since some events might use that
         ctxt.init_pid(target_pid as u64, cwd.clone());
+        for entry in std::fs::read_dir(format!("/proc/{}/fd", target_pid))? {
+            let entry = entry?;
+            let fd: i32 = entry.file_name().to_string_lossy().parse().unwrap();
+            let path = std::fs::read_link(entry.path())?;
+            ctxt.map_fds(target_pid, fd, path);
+        }
     }
 
     let skel_builder = HsTraceSkelBuilder::default();
@@ -205,7 +211,7 @@ fn main() -> Result<()> {
         Err(_) => {}
     }
     let _ = stream_handler.join();
-
+    let ctxt = CTXT.lock().unwrap();
     let mut logs = LOGS.lock().unwrap();
     logs.dump_log();
 

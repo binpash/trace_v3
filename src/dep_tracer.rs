@@ -168,12 +168,16 @@ impl Logs {
     }
 
     pub fn dump_log(&mut self) {
-        for (pid_tgid, log) in self.log.iter() {
-            println!(
-                "log for pid {} tgid {}:",
-                pid_tgid & 0xFFFFFFFF,
-                pid_tgid >> 32
-            );
+        let mut sorted_logs: Vec<_> = self
+            .log
+            .iter()
+            .map(|(pid_tgid, logs)| (pid_tgid & 0xFFFFFFFF, pid_tgid >> 32, logs))
+            .collect();
+
+        sorted_logs.sort_by(|(a, b, c), (d, e, f)| a.cmp(d));
+
+        for (pid, tgid, log) in sorted_logs {
+            println!("log for pid {} tgid {}:", pid, tgid);
             for e in log.iter() {
                 match e {
                     SyscallEvent::Enter0(e) => {
@@ -215,6 +219,7 @@ pub struct Context {
     cwd_map: HashMap<u64, PathBuf>,
     process_graph: HashMap<u64, u64>,
     dirfd_map: HashMap<(u64, i32), PathBuf>,
+    openfds_map: HashMap<(i32, i32), PathBuf>,
 }
 
 impl Context {
@@ -223,6 +228,7 @@ impl Context {
             cwd_map: HashMap::new(),
             process_graph: HashMap::new(),
             dirfd_map: HashMap::new(),
+            openfds_map: HashMap::new(),
         }
     }
     pub fn init_pid(&mut self, pid: u64, cwd: PathBuf) {
@@ -230,10 +236,37 @@ impl Context {
     }
 
     pub fn do_clone(&mut self, parent_pid_tgid: u64, child_pid_tgid: u64) -> () {
+        // let parent_id = ((parent_pid_tgid >> 32) as i32);
+        // let child_id  = ((child_pid_tgid  >> 32) as i32);
         self.process_graph.insert(child_pid_tgid, parent_pid_tgid);
         let parent_cwd = self.cwd_map.get(&parent_pid_tgid).unwrap();
         self.cwd_map.insert(child_pid_tgid, parent_cwd.clone());
+        let new_pid_fds: Vec<_> = self
+            .openfds_map
+            .iter()
+            .filter(|&((pid, fd), path)| {
+                if *pid == (parent_pid_tgid & 0xFFFFFFFF) as i32 {
+                    true
+                } else {
+                    false
+                }
+            })
+            .map(|(&key, path)| (key, path.clone()))
+            .collect();
+        for ((_old_pid, fd), path) in new_pid_fds {
+            self.map_fds((child_pid_tgid & 0xFFFFFFFF) as i32, fd, path.to_owned())
+        }
+        let c = &self.openfds_map;
+     }
+
+    pub fn map_fds(&mut self, pid: i32, fd: i32, path: PathBuf) {
+        self.openfds_map.insert((pid, fd), path);
     }
+
+    pub fn get_path_from_fd(&self, pid: i32, fd: i32) -> Option<PathBuf> {
+        self.openfds_map.get(&(pid, fd)).map(|path| path.clone())
+    }
+
 }
 
 pub struct RWSet {
@@ -335,10 +368,13 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             fd,
             path,
         } => match syscall_nr {
+            libc::SYS_dup => {
+                parse_dup(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
+            }
             libc::SYS_inotify_add_watch => parse_SYS_inotify_add_watch(
                 &mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path,
             ),
-            libc::SYS_openat => {
+            libc::SYS_openat | libc::SYS_openat2 => {
                 parse_openat(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
 
@@ -395,7 +431,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             | libc::SYS_mknodat
             | libc::SYS_fchownat
             | libc::SYS_fchmodat => {
-                parse_r_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
+                parse_w_fd_path_e1(&mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path)
             }
             // libc::SYS_futimeat => {}
             _ => {}
@@ -410,9 +446,16 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             fd2,
             path2,
         } => match syscall_nr {
+            libc::SYS_dup3 => parse_dup23(
+                &mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path, fd2, &path2,
+            ),
             // libc::SYS_link => {}
             // libc::SYS_rename => {}
             libc::SYS_renameat | libc::SYS_renameat2 => parse_renameat(
+                &mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path, fd2, &path2,
+            ),
+
+            libc::SYS_pipe2 => parse_pipe2(
                 &mut ctxt, &mut sets, pid, ret, syscall_nr, flags, fd, &path, fd2, &path2,
             ),
             _ => {}
@@ -475,6 +518,75 @@ enum AccessKind {
     Write,
 }
 
+fn parse_dup(
+    ctxt: &mut Context,
+    _sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    _syscall_nr: i64,
+    _flags: u32,
+    fd: i32,
+    _path: &str,
+) {
+    if ret < 0 {
+        return;
+    }
+    let c = (pid & 0xFFFF_FFFF) as i32;
+
+    let new_fd = match i32::try_from(ret) {
+        Ok(x) => x,
+        Err(_) => return,
+    };
+
+    let pid: i32 = (pid & 0xFFFF_FFFF) as i32;
+
+    if let Some(p) = ctxt.get_path_from_fd(pid, fd) {
+        ctxt.map_fds(pid, fd, p.clone());
+        ctxt.map_fds(pid, new_fd, p);
+    }
+}
+
+fn parse_dup23(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    syscall_nr: i64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+    fd2: i32,
+    path2: &str,
+) {
+    let pid = (pid & 0xFFFFFFFF) as i32;
+
+    if ret >= 0 {
+        let new_map = ctxt.get_path_from_fd(pid, fd);
+        if let Some(valid_path) = new_map {
+            ctxt.map_fds(pid, fd2, valid_path);
+        }
+    }
+}
+
+fn parse_pipe2(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid: u64,
+    ret: i64,
+    syscall_nr: i64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+    fd2: i32,
+    path2: &str,
+) {
+    let path = convert_absolute(ctxt, pid, path, None);
+    let pid = (pid & 0xFFFFFFFF) as i32;
+    println!("{pid}");
+
+    ctxt.map_fds(pid, fd, path.clone());
+    ctxt.map_fds(pid, fd2, path);
+}
 fn parse_SYS_inotify_add_watch(
     ctxt: &mut Context,
     sets: &mut RWSet,
@@ -493,6 +605,36 @@ fn parse_SYS_inotify_add_watch(
     insert_with_ancestors(sets, abs, AccessKind::Read);
 }
 
+// fn parse_openat(
+//     ctxt: &mut Context,
+//     sets: &mut RWSet,
+//     pid: u64,
+//     ret: i64,
+//     syscall_nr: i64,
+//     flags: u32,
+//     fd: i32,
+//     path: &str,
+// ) {
+//     let abs = convert_absolute(&ctxt, pid, &path, Some(fd));
+//     if ret >= 0 {
+//         let new_fd = ret as i32;
+//         ctxt.map_fds((pid & 0xFFFFFFFF) as i32, new_fd, abs.clone());
+
+//         if (flags & libc::O_DIRECTORY as u32) != 0 {
+//             ctxt.dirfd_map.insert((pid, new_fd), abs.clone());
+//         }
+//     }
+
+//     let kind = if ret < 0 {
+//         AccessKind::Read
+//     } else if (flags & libc::O_RDONLY as u32) != 0 {
+//         AccessKind::Read
+//     } else {
+//         AccessKind::Write
+//     };
+//     insert_with_ancestors(sets, abs, kind);
+// }
+
 fn parse_openat(
     ctxt: &mut Context,
     sets: &mut RWSet,
@@ -504,19 +646,40 @@ fn parse_openat(
     path: &str,
 ) {
     let abs = convert_absolute(&ctxt, pid, &path, Some(fd));
+    if ret >= 0 {
+        let new_fd = ret as i32;
+        ctxt.map_fds((pid & 0xFFFFFFFF) as i32, new_fd, abs.clone());
 
-    if ret >= 0 && (flags & libc::O_DIRECTORY as u32) != 0 {
-        ctxt.dirfd_map.insert((pid, ret as i32), abs.clone());
+        if (flags & libc::O_DIRECTORY as u32) != 0 {
+            ctxt.dirfd_map.insert((pid, new_fd), abs.clone());
+        }
     }
 
-    let kind = if ret < 0 {
-        AccessKind::Read
-    } else if (flags & libc::O_RDONLY as u32) != 0 {
-        AccessKind::Read
+    if ret < 0 {
+        // Failed open is always a read attempt
+        insert_with_ancestors(sets, abs, AccessKind::Read);
     } else {
-        AccessKind::Write
-    };
-    insert_with_ancestors(sets, abs, kind);
+        // Check the access mode (lower 2 bits of flags)
+        let access_mode = (flags & libc::O_ACCMODE as u32) as i32;
+        
+        match access_mode {
+            libc::O_RDONLY => {
+                insert_with_ancestors(sets, abs, AccessKind::Read);
+            }
+            libc::O_WRONLY => {
+                insert_with_ancestors(sets, abs, AccessKind::Write);
+            }
+            libc::O_RDWR => {
+                // File is opened for both reading and writing
+                insert_with_ancestors(sets, abs.clone(), AccessKind::Read);
+                insert_with_ancestors(sets, abs, AccessKind::Write);
+            }
+            _ => {
+                // Shouldn't happen, but default to read
+                insert_with_ancestors(sets, abs, AccessKind::Read);
+            }
+        }
+    }
 }
 
 fn parse_open(
@@ -572,6 +735,8 @@ fn parse_clone(
     if ret < 0 {
         return;
     };
+    let a = (pid & 0xFFFFFFFF) as i32;
+    let r = ret as i32;
     ctxt.do_clone(pid, ret as u64)
 }
 

@@ -20,6 +20,13 @@ struct {
 	__uint(max_entries, 1);
 } missed_events SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, u32);
+	__type(value, u64);
+	__uint(max_entries, 1024*1024);
+} pipe_tracker SEC(".maps");
+
 // struct {
 // 	__uint(type, BPF_MAP_TYPE_HASH);
 // 	__type(key, struct unique_file_t);
@@ -47,6 +54,115 @@ enum syscall_event_type {
 	SYS_ENTER2,
 	SYS_EXIT
 };
+
+SEC("tracepoint/syscalls/sys_enter_pipe2")
+int
+hs_trace_create_pipe(struct trace_event_raw_sys_enter *tp)
+{
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 pid = pid_tgid & 0xFFFFFFFF;
+    
+    if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
+        return 0;
+    }
+
+    u64 ptr = (u64)tp->args[0];
+    if (bpf_map_update_elem(&pipe_tracker, &pid, &ptr, BPF_ANY) < 0) {
+        bpf_printk("failed to update pipe_tracker with pid %d\n", pid);
+        return 0;
+    }
+    
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_exit_pipe2")
+int
+hs_trace_create_pipe_exit(struct trace_event_raw_sys_exit *tp)
+{	
+
+	struct sys_enter_info2_t *enter2;
+
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u32 pid = pid_tgid & 0xFFFFFFFF;
+	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
+		// bpf_printk("pid %d is not in set\n", pid);
+		return 0;
+	}
+	long ret = tp -> ret;
+	if (ret < 0) {
+		return 0;
+	}
+	
+	u64 *fds_pointers =  bpf_map_lookup_elem(&pipe_tracker, &pid);
+
+	if (!fds_pointers) {
+		return 0;
+	}
+	if ((enter2 = bpf_ringbuf_reserve(
+			&output, sizeof(struct sys_enter_info2_t), 0)) ==
+		NULL) {
+		// bpf_printk("FAILED to reserve space in ring buffer
+		// for "
+		//            "event_type == "
+		//            "SYS_ENTER2\n");
+		u32 key = 0;
+		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		if (missed) {
+			__sync_fetch_and_add(missed, 1);
+		}
+
+		return 0;
+	}
+
+	enter2 -> pid = pid_tgid;
+	enter2 -> syscall_nr = tp -> id;
+	enter2 -> flags = -1;
+	bpf_map_delete_elem(&pipe_tracker, &pid);
+
+	int fds[2];
+    bpf_probe_read_user(&fds, sizeof(fds), (void *)(*fds_pointers));
+
+	enter2 -> fd = fds[0];
+	enter2 -> fd2 = fds[1];
+	char *path2 = NULL;
+	char pipe_str[32];
+	__u64 pid_data = pid; 
+    bpf_snprintf(pipe_str, sizeof(pipe_str), "/pipe%d", &pid_data, sizeof(pid_data));
+        
+    // Copy the formatted string to enter2->path
+    int i;
+    #pragma unroll
+    for (i = 0; i < 31 && pipe_str[i] != '\0'; i++) {
+        enter2->path[i] = pipe_str[i];
+    }
+    enter2->path[i] = '\0';
+    
+    bpf_probe_read_user_str(&enter2->path2, sizeof(enter2->path2), path2);
+
+	bpf_ringbuf_submit(enter2, 0);
+
+
+	struct sys_exit_info_t *exit;
+	if ((exit = bpf_ringbuf_reserve(&output, sizeof(struct sys_exit_info_t),
+	                                0)) == NULL) {
+		// bpf_printk(
+		//     "FAILED to reserve space in ring buffer for event_type ==
+		//     " "SYS_EXIT\n");
+		u32 key = 0;
+		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		if (missed) {
+			__sync_fetch_and_add(missed, 1);
+		}
+
+		return 0;
+	}
+	exit->pid = pid_tgid;
+	exit->ret = tp -> ret;
+	bpf_ringbuf_submit(exit, 0);
+	
+	return 0;
+}
+
 
 SEC("tp_btf/sched_process_fork")
 
@@ -152,6 +268,14 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		event_type = SYS_ENTER1;
 		break;
 #endif
+#ifdef __NR_openat2
+	case __NR_openat2: /* individually */
+		fd = (int)PT_REGS_PARM1_CORE(regs);
+		path = (char *)PT_REGS_PARM2_CORE(regs);
+		flags = (int)PT_REGS_PARM3_CORE(regs);
+		event_type = SYS_ENTER1;
+		break;
+#endif
 #ifdef __NR_open
 	case __NR_open:
 		path = (char *)PT_REGS_PARM1_CORE(regs);
@@ -216,6 +340,22 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		path = (char *)PT_REGS_PARM2_CORE(regs);
 		event_type = SYS_ENTER1;
 		break;
+#endif
+#ifdef __NR_dup2
+	case __NR_dup2:
+#endif
+#ifdef __NR_dup3
+	case __NR_dup3:
+		fd = (int)PT_REGS_PARM1_CORE(regs);
+		fd2 = (int)PT_REGS_PARM2_CORE(regs);
+		event_type = SYS_ENTER2;
+		break;
+#endif
+#ifdef __NR_dup
+	case __NR_dup:
+		fd = (int)PT_REGS_PARM1_CORE(regs);
+		event_type = SYS_ENTER1;
+	break;
 #endif
 #ifdef __NR_execve
 	case __NR_execve: /* r_first_path_set */
@@ -431,7 +571,6 @@ struct sys_exit_args {
 };
 
 SEC("tracepoint/raw_syscalls/sys_exit")
-
 int
 BPF_PROG(hs_trace_sys_exit)
 {
@@ -447,6 +586,9 @@ BPF_PROG(hs_trace_sys_exit)
 	switch (syscall_id) {
 #ifdef __NR_openat
 	case __NR_openat: /* individually */
+#endif
+#ifdef __NR_openat2
+	case __NR_openat2: /* individually */
 #endif
 #ifdef __NR_open
 	case __NR_open:
@@ -477,6 +619,14 @@ BPF_PROG(hs_trace_sys_exit)
 #endif
 #ifdef __NR_execve
 	case __NR_execve: /* r_first_path_set */
+#endif
+#ifdef __NR_dup2
+	case __NR_dup2: 
+#endif
+#ifdef __NR_dup3
+	case __NR_dup3:
+#endif
+#ifdef __NR_dup
 #endif
 #ifdef __NR_statfs
 	case __NR_statfs:
