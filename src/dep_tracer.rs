@@ -890,13 +890,35 @@ pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<
                 let mut logs = LOGS.lock().unwrap();
                 logs.update_log(pid, SyscallEvent::Enter0(e))
             }
-            Ok(Some(SyscallEvent::Enter1(e))) => {
+            Ok(Some(SyscallEvent::Enter1(mut e))) => {
                 let pid = e.pid as u64;
+                {
+                    let ctxt = CTXT.lock().unwrap();
+                    if libc::SYS_dup == e.syscall_nr {
+                        let a = (e.pid & 0xFFFFFFFF) as i32;
+                        if let Some(p) =  ctxt.get_path_from_fd(a, e.fd) {
+                            let path = p.to_str().unwrap().as_bytes();
+                            let len = e.path.len().min(path.len());
+                            e.path[..len].copy_from_slice(path);
+                        }
+                    }
+                }
                 let mut logs = LOGS.lock().unwrap();
                 logs.update_log(pid, SyscallEvent::Enter1(e))
             }
-            Ok(Some(SyscallEvent::Enter2(e))) => {
+            Ok(Some(SyscallEvent::Enter2(mut e))) => {
                 let pid = e.pid as u64;
+                {
+                    let ctxt = CTXT.lock().unwrap();
+                    if libc::SYS_dup3 == e.syscall_nr {
+                        let a = (e.pid & 0xFFFFFFFF) as i32;
+                        if let Some(p) =  ctxt.get_path_from_fd(a, e.fd) {
+                            let path = p.to_str().unwrap().as_bytes();
+                            let len = e.path.len().min(path.len());
+                            e.path[..len].copy_from_slice(path);
+                        }
+                    }
+                }
                 let mut logs = LOGS.lock().unwrap();
                 logs.update_log(pid, SyscallEvent::Enter2(e))
             }
