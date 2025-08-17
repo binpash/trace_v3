@@ -175,7 +175,7 @@ impl Logs {
             .map(|(pid_tgid, logs)| (pid_tgid & 0xFFFFFFFF, pid_tgid >> 32, logs))
             .collect();
 
-        sorted_logs.sort_by(|(a, b, c), (d, e, f)| a.cmp(d));
+        sorted_logs.sort_by(|(pid1, _, _), (pid2, _, _)| pid1.cmp(pid2));
 
         for (pid, tgid, log) in sorted_logs {
             println!("log for pid {} tgid {}:", pid, tgid);
@@ -237,27 +237,18 @@ impl Context {
     }
 
     pub fn do_clone(&mut self, parent_pid_tgid: u64, child_pid_tgid: u64) -> () {
-        // let parent_id = ((parent_pid_tgid >> 32) as i32);
-        // let child_id  = ((child_pid_tgid  >> 32) as i32);
         self.process_graph.insert(child_pid_tgid, parent_pid_tgid);
         let parent_cwd = self.cwd_map.get(&parent_pid_tgid).unwrap();
         self.cwd_map.insert(child_pid_tgid, parent_cwd.clone());
         let new_pid_fds: Vec<_> = self
             .openfds_map
             .iter()
-            .filter(|&((pid, fd), path)| {
-                if *pid == (parent_pid_tgid & 0xFFFFFFFF) as i32 {
-                    true
-                } else {
-                    false
-                }
-            })
+            .filter(|((pid, _), _)| *pid == (parent_pid_tgid & 0xFFFFFFFF) as i32)
             .map(|(&key, path)| (key, path.clone()))
             .collect();
         for ((_old_pid, fd), path) in new_pid_fds {
             self.map_fds((child_pid_tgid & 0xFFFFFFFF) as i32, fd, path.to_owned())
         }
-        let c = &self.openfds_map;
     }
 
     pub fn map_fds(&mut self, pid: i32, fd: i32, path: PathBuf) {
@@ -320,6 +311,7 @@ impl RWSet {
 pub static CTXT: Lazy<Mutex<Context>> = Lazy::new(|| Mutex::new(Context::new()));
 pub static SETS: Lazy<Mutex<RWSet>> = Lazy::new(|| Mutex::new(RWSet::new()));
 pub static LOGS: Lazy<Mutex<Logs>> = Lazy::new(|| Mutex::new(Logs::new()));
+
 enum SyscallInfo {
     Event0 {
         pid_tgid: u64,
