@@ -132,7 +132,7 @@ BPF_PROG(hs_trace_create_pipe_exit)
 		return 0;
 	}
 
-	enter2->pid = pid_tgid;
+	enter2->pid_tgid = pid_tgid;
 	enter2->syscall_nr = ((struct sys_exit_pipe2_args *)ctx)->id;
 	enter2->flags = -1;
 	bpf_map_delete_elem(&pipe_tracker, &pid);
@@ -164,7 +164,7 @@ BPF_PROG(hs_trace_create_pipe_exit)
 
 		return 0;
 	}
-	exit->pid = pid_tgid;
+	exit->pid_tgid = pid_tgid;
 	exit->ret = ((struct sys_exit_pipe2_args *)ctx)->ret;
 	bpf_ringbuf_submit(exit, 0);
 
@@ -209,7 +209,7 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 		}
 		return 0;
 	}
-	enter0->pid = p_pid_tgid;
+	enter0->pid_tgid = p_pid_tgid;
 	enter0->syscall_nr = __NR_clone;
 	enter0->flags = 0;
 	bpf_ringbuf_submit(enter0, 0);
@@ -228,7 +228,7 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 
 		return 0;
 	}
-	exit->pid = p_pid_tgid;
+	exit->pid_tgid = p_pid_tgid;
 	exit->ret = c_pid_tgid;
 	bpf_ringbuf_submit(exit, 0);
 	return 0;
@@ -511,7 +511,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 
 			return 0;
 		}
-		enter0->pid = pid_tgid;
+		enter0->pid_tgid = pid_tgid;
 		enter0->syscall_nr = syscall_id;
 		enter0->flags = flags;
 		bpf_ringbuf_submit(enter0, 0);
@@ -531,7 +531,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 
 			return 0;
 		}
-		enter1->pid = pid_tgid;
+		enter1->pid_tgid = pid_tgid;
 		enter1->syscall_nr = syscall_id;
 		enter1->flags = flags;
 		enter1->fd = fd;
@@ -554,7 +554,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 
 			return 0;
 		}
-		enter2->pid = pid_tgid;
+		enter2->pid_tgid = pid_tgid;
 		enter2->syscall_nr = syscall_id;
 		enter2->flags = flags;
 		enter2->fd = fd;
@@ -760,7 +760,7 @@ BPF_PROG(hs_trace_sys_exit)
 
 		return 0;
 	}
-	exit->pid = pid_tgid;
+	exit->pid_tgid = pid_tgid;
 	exit->ret = ((struct sys_exit_args *)ctx)->ret;
 	bpf_ringbuf_submit(exit, 0);
 
