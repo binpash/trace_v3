@@ -227,15 +227,38 @@ BPF_PROG(hs_trace_create_pipe_exit)
 	enter2->syscall_nr = ((struct sys_exit_pipe2_args *)ctx)->id;
 	enter2->flags = -1;
 	bpf_map_delete_elem(&pipe_tracker, &pid);
+	
+
 
 	int fds[2];
 	bpf_probe_read_user(&fds, sizeof(fds), (void *)(*fds_pointers));
 	enter2->fd = fds[0];
 	enter2->fd2 = fds[1];
 
+	bpf_rcu_read_lock();
+
+	struct task_struct *t = (void *)bpf_get_current_task_btf();
+	struct files_struct *files = BPF_CORE_READ(t, files);
+	struct fdtable *fdtp = NULL;
+
+	bpf_probe_read_kernel(&fdtp, sizeof(fdtp), &files->fdt);
+
+	struct file **fd_array = NULL;
+	bpf_probe_read_kernel(&fd_array, sizeof(fd_array), &fdtp->fd);
+
+
+	int fd0 = fds[0];
+	struct file *file0 = NULL;
+	bpf_probe_read_kernel(&file0, sizeof(file0), &fd_array[fd0]);
+
+
+	u64 ino = 0;
+	ino = BPF_CORE_READ(file0, f_inode, i_ino);
+	bpf_rcu_read_unlock();
+
 	char *path2 = NULL;
 	char pipe_str[32];
-	BPF_SNPRINTF(enter2->path, sizeof(pipe_str), "/pipe%d", pid);
+	BPF_SNPRINTF(enter2->path, sizeof(pipe_str), "/pipe:[%d]", ino);
 
 	bpf_probe_read_user_str(&enter2->path2, sizeof(enter2->path2), path2);
 

@@ -744,7 +744,15 @@ fn parse_dup23(ctxt: &mut Context, pid_tgid: u64, ret: i64, flags: u32, fd: i32,
 fn parse_pipe2(ctxt: &mut Context, pid_tgid: u64, flags: u32, fd: i32, path: &str, fd2: i32) {
     let path = convert_absolute(ctxt, pid_tgid, path, None);
 
+<<<<<<< HEAD
     ctxt.create_pipe(pid_tgid, fd, fd2, flags, path);
+=======
+    ctxt.map_fds(pid, fd, path.clone());
+    ctxt.map_fds(pid, fd2, path.clone());
+    insert_with_ancestors(sets, path.clone(), AccessKind::Read);
+    insert_with_ancestors(sets, path, AccessKind::Write);
+
+>>>>>>> 117a5bf (read the inode number of the pipe)
 }
 
 fn parse_sys_inotify_add_watch(ctxt: &mut Context, sets: &mut RWSet, pid_tgid: u64, path: &str) {
