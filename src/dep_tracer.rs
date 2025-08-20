@@ -582,7 +582,10 @@ fn parse_pipe2(
     println!("{pid}");
 
     ctxt.map_fds(pid, fd, path.clone());
-    ctxt.map_fds(pid, fd2, path);
+    ctxt.map_fds(pid, fd2, path.clone());
+    insert_with_ancestors(sets, path.clone(), AccessKind::Read);
+    insert_with_ancestors(sets, path, AccessKind::Write);
+
 }
 
 fn parse_SYS_inotify_add_watch(
