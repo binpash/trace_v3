@@ -20,6 +20,13 @@ struct {
 	__uint(max_entries, 1);
 } missed_events SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, u32);
+	__type(value, u64);
+	__uint(max_entries, 1024 * 1024);
+} pipe_tracker SEC(".maps");
+
 // struct {
 // 	__uint(type, BPF_MAP_TYPE_HASH);
 // 	__type(key, struct unique_file_t);
@@ -47,6 +54,146 @@ enum syscall_event_type {
 	SYS_ENTER2,
 	SYS_EXIT
 };
+
+struct sys_enter_pipe2_args {
+	unsigned short common_type;
+	unsigned char common_flags;
+	unsigned char common_preempt_count;
+	int common_pid;
+	int id;      // syscall number
+	int *fildes; // pipe fds
+	long flags;  // flags
+};
+
+SEC("tracepoint/syscalls/sys_enter_pipe2")
+
+int
+BPF_PROG(hs_trace_create_pipe)
+{
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u32 pid = pid_tgid & 0xFFFFFFFF;
+
+	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
+		return 0;
+	}
+
+	u64 ptr = (u64)((struct sys_enter_pipe2_args *)ctx)->fildes;
+	if (bpf_map_update_elem(&pipe_tracker, &pid, &ptr, BPF_ANY) < 0) {
+		bpf_printk("failed to update pipe_tracker with pid %d\n", pid);
+		return 0;
+	}
+
+	return 0;
+}
+
+struct sys_exit_pipe2_args {
+	unsigned short common_type;
+	unsigned char common_flags;
+	unsigned char common_preempt_count;
+	int common_pid;
+	int id;   // syscall number
+	long ret; // return value
+};
+
+SEC("tracepoint/syscalls/sys_exit_pipe2")
+
+int
+BPF_PROG(hs_trace_create_pipe_exit)
+{
+	struct sys_enter_info2_t *enter2;
+
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u32 pid = pid_tgid & 0xFFFFFFFF;
+	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
+		// bpf_printk("pid %d is not in set\n", pid);
+		return 0;
+	}
+	if (((struct sys_exit_pipe2_args *)ctx)->ret < 0) {
+		return 0;
+	}
+
+	u64 *fds_pointers;
+	if ((fds_pointers = bpf_map_lookup_elem(&pipe_tracker, &pid)) == NULL) {
+		return 0;
+	}
+
+	if ((enter2 = bpf_ringbuf_reserve(
+		 &output, sizeof(struct sys_enter_info2_t), 0)) == NULL) {
+		// bpf_printk("FAILED to reserve space in ring buffer
+		// for "
+		//            "event_type == "
+		//            "SYS_ENTER2\n");
+		u32 key = 0;
+		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		if (missed) {
+			__sync_fetch_and_add(missed, 1);
+		}
+
+		return 0;
+	}
+
+	enter2->pid_tgid = pid_tgid;
+	enter2->syscall_nr = ((struct sys_exit_pipe2_args *)ctx)->id;
+	enter2->flags = -1;
+	bpf_map_delete_elem(&pipe_tracker, &pid);
+	
+
+
+	int fds[2];
+	bpf_probe_read_user(&fds, sizeof(fds), (void *)(*fds_pointers));
+	enter2->fd = fds[0];
+	enter2->fd2 = fds[1];
+
+	// bpf_rcu_read_lock();
+
+	struct task_struct *t = (void *)bpf_get_current_task_btf();
+	struct files_struct *files = BPF_CORE_READ(t, files);
+	struct fdtable *fdtp = NULL;
+
+	bpf_probe_read_kernel(&fdtp, sizeof(fdtp), &files->fdt);
+
+	struct file **fd_array = NULL;
+	bpf_probe_read_kernel(&fd_array, sizeof(fd_array), &fdtp->fd);
+
+
+	int fd0 = fds[0];
+	struct file *file0 = NULL;
+	bpf_probe_read_kernel(&file0, sizeof(file0), &fd_array[fd0]);
+
+
+	u64 ino = 0;
+	ino = BPF_CORE_READ(file0, f_inode, i_ino);
+	// bpf_rcu_read_unlock();
+
+	char *path2 = NULL;
+	char pipe_str[32];
+	BPF_SNPRINTF(enter2->path, sizeof(pipe_str), "/pipe:[%d]", ino);
+
+	bpf_probe_read_user_str(&enter2->path2, sizeof(enter2->path2), path2);
+
+	bpf_ringbuf_submit(enter2, 0);
+
+	struct sys_exit_info_t *exit;
+	if ((exit = bpf_ringbuf_reserve(&output, sizeof(struct sys_exit_info_t),
+	                                0)) == NULL) {
+		// bpf_printk(
+		//     "FAILED to reserve space in ring buffer for event_type ==
+		//     " "SYS_EXIT\n");
+		u32 key = 0;
+		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		if (missed) {
+			__sync_fetch_and_add(missed, 1);
+		}
+
+		return 0;
+	}
+	exit->pid_tgid = pid_tgid;
+	exit->ret = ((struct sys_exit_pipe2_args *)ctx)->ret;
+	bpf_ringbuf_submit(exit, 0);
+
+	return 0;
+}
+
 
 SEC("tp_btf/sched_process_fork")
 
@@ -85,7 +232,7 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 		}
 		return 0;
 	}
-	enter0->pid = p_pid_tgid;
+	enter0->pid_tgid = p_pid_tgid;
 	enter0->syscall_nr = __NR_clone;
 	enter0->flags = 0;
 	bpf_ringbuf_submit(enter0, 0);
@@ -104,7 +251,7 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 
 		return 0;
 	}
-	exit->pid = p_pid_tgid;
+	exit->pid_tgid = p_pid_tgid;
 	exit->ret = c_pid_tgid;
 	bpf_ringbuf_submit(exit, 0);
 	return 0;
@@ -146,6 +293,14 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	switch (syscall_id) {
 #ifdef __NR_openat
 	case __NR_openat: /* individually */
+		fd = (int)PT_REGS_PARM1_CORE(regs);
+		path = (char *)PT_REGS_PARM2_CORE(regs);
+		flags = (int)PT_REGS_PARM3_CORE(regs);
+		event_type = SYS_ENTER1;
+		break;
+#endif
+#ifdef __NR_openat2
+	case __NR_openat2: /* individually */
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		path = (char *)PT_REGS_PARM2_CORE(regs);
 		flags = (int)PT_REGS_PARM3_CORE(regs);
@@ -214,6 +369,22 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 #ifdef __NR_inotify_add_watch
 	case __NR_inotify_add_watch:
 		path = (char *)PT_REGS_PARM2_CORE(regs);
+		event_type = SYS_ENTER1;
+		break;
+#endif
+#ifdef __NR_dup2
+	case __NR_dup2:
+#endif
+#ifdef __NR_dup3
+	case __NR_dup3:
+		fd = (int)PT_REGS_PARM1_CORE(regs);
+		fd2 = (int)PT_REGS_PARM2_CORE(regs);
+		event_type = SYS_ENTER2;
+		break;
+#endif
+#ifdef __NR_dup
+	case __NR_dup:
+		fd = (int)PT_REGS_PARM1_CORE(regs);
 		event_type = SYS_ENTER1;
 		break;
 #endif
@@ -363,7 +534,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 
 			return 0;
 		}
-		enter0->pid = pid_tgid;
+		enter0->pid_tgid = pid_tgid;
 		enter0->syscall_nr = syscall_id;
 		enter0->flags = flags;
 		bpf_ringbuf_submit(enter0, 0);
@@ -383,7 +554,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 
 			return 0;
 		}
-		enter1->pid = pid_tgid;
+		enter1->pid_tgid = pid_tgid;
 		enter1->syscall_nr = syscall_id;
 		enter1->flags = flags;
 		enter1->fd = fd;
@@ -406,7 +577,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 
 			return 0;
 		}
-		enter2->pid = pid_tgid;
+		enter2->pid_tgid = pid_tgid;
 		enter2->syscall_nr = syscall_id;
 		enter2->flags = flags;
 		enter2->fd = fd;
@@ -448,6 +619,9 @@ BPF_PROG(hs_trace_sys_exit)
 #ifdef __NR_openat
 	case __NR_openat: /* individually */
 #endif
+#ifdef __NR_openat2
+	case __NR_openat2: /* individually */
+#endif
 #ifdef __NR_open
 	case __NR_open:
 #endif
@@ -477,6 +651,14 @@ BPF_PROG(hs_trace_sys_exit)
 #endif
 #ifdef __NR_execve
 	case __NR_execve: /* r_first_path_set */
+#endif
+#ifdef __NR_dup2
+	case __NR_dup2:
+#endif
+#ifdef __NR_dup3
+	case __NR_dup3:
+#endif
+#ifdef __NR_dup
 #endif
 #ifdef __NR_statfs
 	case __NR_statfs:
@@ -601,7 +783,7 @@ BPF_PROG(hs_trace_sys_exit)
 
 		return 0;
 	}
-	exit->pid = pid_tgid;
+	exit->pid_tgid = pid_tgid;
 	exit->ret = ((struct sys_exit_args *)ctx)->ret;
 	bpf_ringbuf_submit(exit, 0);
 
