@@ -52,8 +52,99 @@ enum syscall_event_type {
 	SYS_ENTER0,
 	SYS_ENTER1,
 	SYS_ENTER2,
+	SYS_ENTER_FCNTL,
 	SYS_EXIT
 };
+
+struct sys_enter_fcntl_args {
+	unsigned short common_type;
+	unsigned char common_flags;
+	unsigned char common_preempt_count;
+	int common_pid;
+
+	int syscall_nr;
+	unsigned int fd;
+	unsigned int cmd;
+	unsigned long arg;
+};
+
+SEC("tracepoint/syscalls/sys_enter_fcntl")
+
+int
+BPF_PROG(hs_trace_enter_fcntl)
+{
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u32 pid = pid_tgid & 0xFFFFFFFF;
+
+	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
+		return 0;
+	}
+	struct sys_enter_fcntl_info_t *enter_fcntl;
+
+	if ((enter_fcntl = bpf_ringbuf_reserve(
+		 &output, sizeof(struct sys_enter_fcntl_info_t), 0)) == NULL) {
+		u32 key = 0;
+		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		if (missed) {
+			__sync_fetch_and_add(missed, 1);
+		}
+		return 0;
+	}
+	enter_fcntl->pid_tgid = pid_tgid;
+	enter_fcntl->syscall_nr =
+	    ((struct sys_enter_fcntl_args *)ctx)->syscall_nr;
+	enter_fcntl->fd = ((struct sys_enter_fcntl_args *)ctx)->fd;
+	enter_fcntl->cmd = ((struct sys_enter_fcntl_args *)ctx)->cmd;
+	enter_fcntl->arg = ((struct sys_enter_fcntl_args *)ctx)->arg;
+	bpf_ringbuf_submit(enter_fcntl, 0);
+	return 0;
+}
+
+struct sys_enter_memfd_create_args {
+	unsigned short common_type;
+	unsigned char common_flags;
+	unsigned char common_preempt_count;
+	int common_pid;
+	int syscall_nr;
+	const char *uname;
+	unsigned int flags;
+};
+
+SEC("tracepoint/syscalls/sys_enter_memfd_create")
+
+int
+BPF_PROG(hs_trace_enter_memfd_create)
+{
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u32 pid = pid_tgid & 0xFFFFFFFF;
+
+	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
+		return 0;
+	}
+
+	struct sys_enter_info1_t *enter1;
+
+	if ((enter1 = bpf_ringbuf_reserve(
+		 &output, sizeof(struct sys_enter_info1_t), 0)) == NULL) {
+		u32 key = 0;
+		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		if (missed) {
+			__sync_fetch_and_add(missed, 1);
+		}
+
+		return 0;
+	}
+
+	enter1->pid_tgid = pid_tgid;
+	enter1->syscall_nr =
+	    ((struct sys_enter_memfd_create_args *)ctx)->syscall_nr;
+	enter1->flags = ((struct sys_enter_memfd_create_args *)ctx)->flags;
+	BPF_SNPRINTF(enter1->path, sizeof(enter1->path), "memfd:%s",
+	             ((struct sys_enter_memfd_create_args *)ctx)->uname);
+
+	bpf_ringbuf_submit(enter1, 0);
+	return 0;
+}
 
 struct sys_enter_pipe2_args {
 	unsigned short common_type;
@@ -264,7 +355,8 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	int fd2 = -1;
 	char *path = NULL;
 	char *path2 = NULL;
-	int flags = 0;
+	unsigned int flags = 0;
+	unsigned long int arg = 0;
 	enum syscall_event_type event_type;
 
 	switch (syscall_id) {
@@ -306,27 +398,28 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 #endif
 #ifdef __NR_symlink
 	case __NR_symlink:
-#endif
 		// NOTE: symlink only incurs a dependency for the symlink file
 		// itself
 		path = (char *)PT_REGS_PARM2_CORE(regs);
 		event_type = SYS_ENTER1;
 		break;
+#endif
 #ifdef __NR_link
 	case __NR_link:
-#endif
 		// NOTE: link incurs a dependency on both the original path and
 		// the new path for the inode
 		path = (char *)PT_REGS_PARM1_CORE(regs);
 		path2 = (char *)PT_REGS_PARM2_CORE(regs);
 		event_type = SYS_ENTER2;
 		break;
+#endif
 #ifdef __NR_renameat2
 	case __NR_renameat2:
 #endif
 		// TODO (dan 2025-05-27): flags for renameat2 might need special
 		// handling
 		flags = (int)PT_REGS_PARM5_CORE(regs);
+		// FALLTHROUGH
 #ifdef __NR_renameat
 	case __NR_renameat:
 #endif
@@ -351,6 +444,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 #endif
 #ifdef __NR_dup2
 	case __NR_dup2:
+		// FALLTHROUGH
 #endif
 #ifdef __NR_dup3
 	case __NR_dup3:
@@ -363,6 +457,21 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	case __NR_dup:
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		event_type = SYS_ENTER1;
+		break;
+#endif
+#ifdef __NR_close
+	case __NR_close:
+		fd = (int)PT_REGS_PARM1_CORE(regs);
+		event_type = SYS_ENTER1;
+		break;
+#endif
+#ifdef __NR_fcntl
+	case __NR_fcntl:
+		// TODO: COMPLETE
+		fd = (int)PT_REGS_PARM1_CORE(regs);
+		flags = (unsigned int)PT_REGS_PARM2_CORE(regs);
+		arg = PT_REGS_PARM3_CORE(regs);
+		event_type = SYS_ENTER_FCNTL;
 		break;
 #endif
 #ifdef __NR_execve
@@ -485,8 +594,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		event_type = SYS_ENTER1;
 		break;
 	default:
-		// bpf_printk("ignoring sys_enter event for syscall %ld\n",
-		// syscall_id);
+		// ignore
 		return 0;
 	}
 
@@ -495,20 +603,16 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	struct sys_enter_info0_t *enter0;
 	struct sys_enter_info1_t *enter1;
 	struct sys_enter_info2_t *enter2;
+	struct sys_enter_fcntl_info_t *enter_fcntl;
 	if (event_type == SYS_ENTER0) {
 		if ((enter0 = bpf_ringbuf_reserve(
 			 &output, sizeof(struct sys_enter_info0_t), 0)) ==
 		    NULL) {
-			// bpf_printk("FAILED to reserve space in ring buffer
-			// for "
-			//            "event_type == "
-			//            "SYS_ENTER0\n");
 			u32 key = 0;
 			u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
 			if (missed) {
 				__sync_fetch_and_add(missed, 1);
 			}
-
 			return 0;
 		}
 		enter0->pid_tgid = pid_tgid;
@@ -519,16 +623,11 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		if ((enter1 = bpf_ringbuf_reserve(
 			 &output, sizeof(struct sys_enter_info1_t), 0)) ==
 		    NULL) {
-			// bpf_printk("FAILED to reserve space in ring buffer
-			// for "
-			//            "event_type == "
-			//            "SYS_ENTER1\n");
 			u32 key = 0;
 			u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
 			if (missed) {
 				__sync_fetch_and_add(missed, 1);
 			}
-
 			return 0;
 		}
 		enter1->pid_tgid = pid_tgid;
@@ -542,16 +641,11 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		if ((enter2 = bpf_ringbuf_reserve(
 			 &output, sizeof(struct sys_enter_info2_t), 0)) ==
 		    NULL) {
-			// bpf_printk("FAILED to reserve space in ring buffer
-			// for "
-			//            "event_type == "
-			//            "SYS_ENTER2\n");
 			u32 key = 0;
 			u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
 			if (missed) {
 				__sync_fetch_and_add(missed, 1);
 			}
-
 			return 0;
 		}
 		enter2->pid_tgid = pid_tgid;
@@ -626,9 +720,6 @@ BPF_PROG(hs_trace_sys_exit)
 #ifdef __NR_inotify_add_watch
 	case __NR_inotify_add_watch:
 #endif
-#ifdef __NR_execve
-	case __NR_execve: /* r_first_path_set */
-#endif
 #ifdef __NR_dup2
 	case __NR_dup2:
 #endif
@@ -636,6 +727,19 @@ BPF_PROG(hs_trace_sys_exit)
 	case __NR_dup3:
 #endif
 #ifdef __NR_dup
+	case __NR_dup:
+#endif
+#ifdef __NR_close
+	case __NR_close:
+#endif
+#ifdef __NR_fcntl
+	case __NR_fcntl:
+#endif
+#ifdef __NR_memfd_create
+	case __NR_memfd_create:
+#endif
+#ifdef __NR_execve
+	case __NR_execve: /* r_first_path_set */
 #endif
 #ifdef __NR_statfs
 	case __NR_statfs:

@@ -144,11 +144,23 @@ pub fn w_fd_path_syscall_map() -> HashMap<i64, &'static str> {
     m
 }
 
+#[inline(always)]
+pub fn upid_of(pid_tgid: u64) -> u32 {
+    // NOTE: userspace pid = kernel tgid
+    (pid_tgid >> 32) as u32
+}
+
+#[inline(always)]
+pub fn utid_of(pid_tgid: u64) -> u32 {
+    (pid_tgid & 0xFFFFFFFF) as u32
+}
+
 #[derive(Debug)]
 pub enum SyscallEvent {
     Enter0(sys_enter_info0_t),
     Enter1(sys_enter_info1_t),
     Enter2(sys_enter_info2_t),
+    EnterFcntl(sys_enter_fcntl_info_t),
     Exit(sys_exit_info_t),
 }
 pub struct Logs {
@@ -172,13 +184,13 @@ impl Logs {
         let mut sorted_logs: Vec<_> = self
             .log
             .iter()
-            .map(|(pid_tgid, logs)| (pid_tgid & 0xFFFFFFFF, pid_tgid >> 32, logs))
+            .map(|(pid_tgid, logs)| (upid_of(*pid_tgid), utid_of(*pid_tgid), logs))
             .collect();
 
         sorted_logs.sort_by(|(pid1, _, _), (pid2, _, _)| pid1.cmp(pid2));
 
-        for (pid, tgid, log) in sorted_logs {
-            println!("log for pid {} tgid {}:", pid, tgid);
+        for (pid, tid, log) in sorted_logs {
+            println!("log for pid {} tid {}:", pid, tid);
             for e in log.iter() {
                 match e {
                     SyscallEvent::Enter0(e) => {
@@ -207,6 +219,9 @@ impl Logs {
                             e.flags
                         );
                     }
+                    SyscallEvent::EnterFcntl(e) => {
+                        print!("{}(fd={},cmd={},arg={})", e.syscall_nr, e.fd, e.cmd, e.arg);
+                    }
                     SyscallEvent::Exit(e) => {
                         println!(" -> {}", e.ret);
                     }
@@ -216,11 +231,75 @@ impl Logs {
     }
 }
 
+#[derive(Clone)]
+struct OpenFile {
+    status_flags: u32,
+    path: PathBuf,
+}
+
+struct OpenFileTable {
+    table: HashMap<u32, OpenFile>,
+    ctr: u32,
+}
+
+impl OpenFileTable {
+    pub fn new() -> OpenFileTable {
+        OpenFileTable {
+            table: HashMap::new(),
+            ctr: 0,
+        }
+    }
+
+    #[inline]
+    pub fn get_path(&self, file: u32) -> Option<&OpenFile> {
+        self.table.get(&file)
+    }
+
+    pub fn open_file(&mut self, status_flags: u32, path: PathBuf) -> u32 {
+        while self.table.contains_key(&self.ctr) {
+            self.ctr += 1;
+        }
+        self.table.insert(self.ctr, OpenFile { status_flags, path });
+        let file = self.ctr;
+        self.ctr += 1;
+        file
+    }
+
+    pub fn close_file(&mut self, file: u32) {
+        self.table.remove(&file);
+        self.ctr = file;
+    }
+
+    pub fn get_flags(&mut self, file: u32) -> u32 {
+        let open_file = self
+            .table
+            .get(&file)
+            .expect("expected open file {file} to retrieve status flags");
+
+        open_file.status_flags
+    }
+
+    pub fn set_flags(&mut self, file: u32, status_flags: u32) {
+        let open_file = self
+            .table
+            .get_mut(&file)
+            .expect("expected open file {file} to modify status flags");
+
+        open_file.status_flags = status_flags;
+    }
+}
+
+#[derive(Clone)]
+struct FileDesc {
+    fd_flags: u32,
+    open_file: u32,
+}
+
 pub struct Context {
     cwd_map: HashMap<u64, PathBuf>,
     process_graph: HashMap<u64, u64>,
-    dirfd_map: HashMap<(u64, i32), PathBuf>,
-    openfds_map: HashMap<(i32, i32), PathBuf>,
+    open_files: OpenFileTable,
+    fd_tables: HashMap<u32, HashMap<i32, FileDesc>>,
 }
 
 impl Context {
@@ -228,35 +307,144 @@ impl Context {
         Context {
             cwd_map: HashMap::new(),
             process_graph: HashMap::new(),
-            dirfd_map: HashMap::new(),
-            openfds_map: HashMap::new(),
+            open_files: OpenFileTable::new(),
+            fd_tables: HashMap::new(),
         }
     }
-    pub fn init_pid(&mut self, pid: u64, cwd: PathBuf) {
-        self.cwd_map.insert(pid, cwd);
+
+    pub fn init_pid(&mut self, pid_tgid: u64, cwd: PathBuf) {
+        self.cwd_map.insert(pid_tgid, cwd);
     }
 
-    pub fn do_clone(&mut self, parent_pid_tgid: u64, child_pid_tgid: u64) -> () {
+    pub fn do_clone(&mut self, parent_pid_tgid: u64, child_pid_tgid: u64) {
         self.process_graph.insert(child_pid_tgid, parent_pid_tgid);
         let parent_cwd = self.cwd_map.get(&parent_pid_tgid).unwrap();
         self.cwd_map.insert(child_pid_tgid, parent_cwd.clone());
-        let new_pid_fds: Vec<_> = self
-            .openfds_map
-            .iter()
-            .filter(|((pid, _), _)| *pid == (parent_pid_tgid & 0xFFFFFFFF) as i32)
-            .map(|(&key, path)| (key, path.clone()))
-            .collect();
-        for ((_old_pid, fd), path) in new_pid_fds {
-            self.map_fds((child_pid_tgid & 0xFFFFFFFF) as i32, fd, path.to_owned())
-        }
+        let parent_pid = upid_of(parent_pid_tgid);
+        let child_pid = upid_of(child_pid_tgid);
+        let fd_table = self
+            .fd_tables
+            .get(&parent_pid)
+            .expect("missing fd table for {parent_pid}");
+        self.fd_tables.insert(child_pid, fd_table.clone());
     }
 
-    pub fn map_fds(&mut self, pid: i32, fd: i32, path: PathBuf) {
-        self.openfds_map.insert((pid, fd), path);
+    pub fn open_file(
+        &mut self,
+        pid_tgid: u64,
+        new_fd: i32,
+        fd_flags: u32,
+        status_flags: u32,
+        path: PathBuf,
+    ) {
+        let pid = upid_of(pid_tgid);
+        let open_file = self.open_files.open_file(status_flags, path);
+        let fd_table = self
+            .fd_tables
+            .get_mut(&pid)
+            .expect("expected fd table for pid {pid}");
+        fd_table.insert(
+            new_fd,
+            FileDesc {
+                fd_flags,
+                open_file,
+            },
+        );
     }
 
-    pub fn get_path_from_fd(&self, pid: i32, fd: i32) -> Option<PathBuf> {
-        self.openfds_map.get(&(pid, fd)).map(|path| path.clone())
+    pub fn dup_file(&mut self, pid_tgid: u64, old_fd: i32, new_fd: i32, fd_flags: u32) {
+        let pid = upid_of(pid_tgid);
+        let fd_table = self
+            .fd_tables
+            .get_mut(&pid)
+            .expect("expected fd table for pid {pid}");
+        let old_file_desc = fd_table
+            .get(&old_fd)
+            .expect("expected old fd {old_fd} to be present for pid {pid}");
+        let open_file = old_file_desc.open_file;
+        fd_table.insert(
+            new_fd,
+            FileDesc {
+                fd_flags,
+                open_file,
+            },
+        );
+    }
+
+    pub fn create_pipe(&mut self, pid_tgid: u64, fd1: i32, fd2: i32, flags: u32, path: PathBuf) {
+        let pid = upid_of(pid_tgid);
+        let read_end = self.open_files.open_file(0, path.clone());
+        let write_end = self.open_files.open_file(0, path);
+        let fd_table = self
+            .fd_tables
+            .get_mut(&pid)
+            .expect("expected fd table for pid {pid}");
+        let fd_flags = if flags & libc::O_CLOEXEC as u32 > 0 {
+            libc::FD_CLOEXEC as u32
+        } else {
+            0
+        };
+        fd_table.insert(
+            fd1,
+            FileDesc {
+                fd_flags,
+                open_file: read_end,
+            },
+        );
+        fd_table.insert(
+            fd2,
+            FileDesc {
+                fd_flags,
+                open_file: write_end,
+            },
+        );
+    }
+
+    pub fn close_file(&mut self, pid_tgid: u64, fd: i32) {
+        let pid = upid_of(pid_tgid);
+        let fd_table = self
+            .fd_tables
+            .get_mut(&pid)
+            .expect("expected fd table for pid {pid}");
+        fd_table.remove(&fd);
+    }
+
+    pub fn get_fd_flags(&mut self, pid_tgid: u64, fd: i32) -> u32 {
+        let pid = upid_of(pid_tgid);
+        let fd_table = self
+            .fd_tables
+            .get_mut(&pid)
+            .expect("expected fd table for pid {pid}");
+        let file_desc = fd_table
+            .get(&fd)
+            .expect("expected fd {fd} to be present for pid {pid}");
+        file_desc.fd_flags
+    }
+
+    pub fn set_fd_flags(&mut self, pid_tgid: u64, fd: i32, fd_flags: u32) {
+        let pid = upid_of(pid_tgid);
+        let fd_table = self
+            .fd_tables
+            .get_mut(&pid)
+            .expect("expected fd table for pid {pid}");
+        let file_desc = fd_table
+            .get_mut(&fd)
+            .expect("expected fd {fd} to be present for pid {pid}");
+        file_desc.fd_flags = fd_flags;
+    }
+
+    pub fn get_path_from_fd(&self, pid_tgid: u64, fd: i32) -> PathBuf {
+        let pid = upid_of(pid_tgid);
+        let fd_table = self
+            .fd_tables
+            .get(&pid)
+            .expect("expected fd table for pid {pid}");
+        let file_desc = fd_table.get(&fd).expect("expected fd for pid {pid}");
+        let open_file = self
+            .open_files
+            .get_path(file_desc.open_file)
+            .expect("expected open file {file_desc.open_file}");
+        open_file.path.clone()
     }
 }
 
@@ -337,6 +525,14 @@ enum SyscallInfo {
         fd2: i32,
         path2: String,
     },
+    EventFcntl {
+        pid_tgid: u64,
+        ret: i64,
+        syscall_nr: i64,
+        fd: i32,
+        cmd: u32,
+        arg: u64,
+    },
 }
 
 fn on_event_update_rw_sets(event: SyscallInfo) {
@@ -360,12 +556,10 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             fd,
             path,
         } => match syscall_nr {
-            libc::SYS_dup => parse_dup(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
-            ),
-            libc::SYS_inotify_add_watch => parse_SYS_inotify_add_watch(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
-            ),
+            libc::SYS_dup => parse_dup(&mut ctxt, pid_tgid, ret, fd),
+            libc::SYS_inotify_add_watch => {
+                parse_sys_inotify_add_watch(&mut ctxt, &mut sets, pid_tgid, &path)
+            }
             libc::SYS_openat | libc::SYS_openat2 => parse_openat(
                 &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
             ),
@@ -441,19 +635,23 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             fd2,
             path2,
         } => match syscall_nr {
-            libc::SYS_dup3 => parse_dup23(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path, fd2, &path2,
-            ),
+            libc::SYS_dup3 => parse_dup23(&mut ctxt, pid_tgid, ret, flags, fd, fd2),
             // libc::SYS_link => {}
             // libc::SYS_rename => {}
             libc::SYS_renameat | libc::SYS_renameat2 => parse_renameat(
                 &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path, fd2, &path2,
             ),
-            libc::SYS_pipe2 => parse_pipe2(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path, fd2, &path2,
-            ),
+            libc::SYS_pipe2 => parse_pipe2(&mut ctxt, pid_tgid, flags, fd, &path, fd2),
             _ => {}
         },
+        SyscallInfo::EventFcntl {
+            pid_tgid,
+            ret,
+            syscall_nr: _,
+            fd,
+            cmd,
+            arg,
+        } => parse_fcntl(&mut ctxt, pid_tgid, ret, fd, cmd, arg),
     }
 }
 
@@ -472,10 +670,7 @@ fn convert_absolute(ctxt: &Context, pid_tgid: u64, raw_path: &str, dirfd: Option
                     .expect("pid_tgid not found bc pid_tgid not in cwd")
                     .clone()
             } else {
-                ctxt.dirfd_map
-                    .get(&(pid_tgid, fd))
-                    .expect("fd or pid_tgid not found in map")
-                    .clone()
+                ctxt.get_path_from_fd(pid_tgid, fd)
             }
         } else {
             ctxt.cwd_map
@@ -516,16 +711,21 @@ enum AccessKind {
     Write,
 }
 
-fn parse_dup(
-    ctxt: &mut Context,
-    _sets: &mut RWSet,
-    pid_tgid: u64,
-    ret: i64,
-    _syscall_nr: i64,
-    _flags: u32,
-    fd: i32,
-    _path: &str,
-) {
+fn parse_fcntl(ctxt: &mut Context, pid_tgid: u64, ret: i64, fd: i32, cmd: u32, arg: u64) {
+    match cmd as i32 {
+        libc::F_DUPFD => parse_dup(ctxt, pid_tgid, ret, fd),
+        libc::F_DUPFD_CLOEXEC => ctxt.dup_file(pid_tgid, fd, ret as i32, libc::FD_CLOEXEC as u32),
+        libc::F_GETFD => {
+            ctxt.get_fd_flags(pid_tgid, fd);
+        }
+        libc::F_SETFD => ctxt.set_fd_flags(pid_tgid, fd, arg as u32),
+        _ => {
+            // other fcntl commands are not important to file dependencies
+        }
+    }
+}
+
+fn parse_dup(ctxt: &mut Context, pid_tgid: u64, ret: i64, fd: i32) {
     if ret < 0 {
         return;
     }
@@ -535,66 +735,22 @@ fn parse_dup(
         Err(_) => return,
     };
 
-    let pid: i32 = (pid_tgid & 0xFFFF_FFFF) as i32;
+    ctxt.dup_file(pid_tgid, fd, new_fd, 0);
+}
 
-    if let Some(p) = ctxt.get_path_from_fd(pid, fd) {
-        ctxt.map_fds(pid, fd, p.clone());
-        ctxt.map_fds(pid, new_fd, p);
+fn parse_dup23(ctxt: &mut Context, pid_tgid: u64, ret: i64, flags: u32, fd: i32, fd2: i32) {
+    if ret as i32 == fd2 {
+        ctxt.dup_file(pid_tgid, fd, fd2, flags);
     }
 }
 
-fn parse_dup23(
-    ctxt: &mut Context,
-    sets: &mut RWSet,
-    pid_tgid: u64,
-    ret: i64,
-    syscall_nr: i64,
-    flags: u32,
-    fd: i32,
-    path: &str,
-    fd2: i32,
-    path2: &str,
-) {
-    let pid = (pid_tgid & 0xFFFFFFFF) as i32;
-
-    if ret >= 0 {
-        let new_map = ctxt.get_path_from_fd(pid, fd);
-        if let Some(valid_path) = new_map {
-            ctxt.map_fds(pid, fd2, valid_path);
-        }
-    }
-}
-
-fn parse_pipe2(
-    ctxt: &mut Context,
-    sets: &mut RWSet,
-    pid_tgid: u64,
-    ret: i64,
-    syscall_nr: i64,
-    flags: u32,
-    fd: i32,
-    path: &str,
-    fd2: i32,
-    path2: &str,
-) {
+fn parse_pipe2(ctxt: &mut Context, pid_tgid: u64, flags: u32, fd: i32, path: &str, fd2: i32) {
     let path = convert_absolute(ctxt, pid_tgid, path, None);
-    let pid = (pid_tgid & 0xFFFFFFFF) as i32;
-    println!("{pid}");
 
-    ctxt.map_fds(pid, fd, path.clone());
-    ctxt.map_fds(pid, fd2, path);
+    ctxt.create_pipe(pid_tgid, fd, fd2, flags, path);
 }
 
-fn parse_SYS_inotify_add_watch(
-    ctxt: &mut Context,
-    sets: &mut RWSet,
-    pid_tgid: u64,
-    ret: i64,
-    syscall_nr: i64,
-    flags: u32,
-    fd: i32,
-    path: &str,
-) {
+fn parse_sys_inotify_add_watch(ctxt: &mut Context, sets: &mut RWSet, pid_tgid: u64, path: &str) {
     if path.is_empty() {
         return;
     }
@@ -602,36 +758,6 @@ fn parse_SYS_inotify_add_watch(
 
     insert_with_ancestors(sets, abs, AccessKind::Read);
 }
-
-// fn parse_openat(
-//     ctxt: &mut Context,
-//     sets: &mut RWSet,
-//     pid: u64,
-//     ret: i64,
-//     syscall_nr: i64,
-//     flags: u32,
-//     fd: i32,
-//     path: &str,
-// ) {
-//     let abs = convert_absolute(&ctxt, pid, &path, Some(fd));
-//     if ret >= 0 {
-//         let new_fd = ret as i32;
-//         ctxt.map_fds((pid & 0xFFFFFFFF) as i32, new_fd, abs.clone());
-
-//         if (flags & libc::O_DIRECTORY as u32) != 0 {
-//             ctxt.dirfd_map.insert((pid, new_fd), abs.clone());
-//         }
-//     }
-
-//     let kind = if ret < 0 {
-//         AccessKind::Read
-//     } else if (flags & libc::O_RDONLY as u32) != 0 {
-//         AccessKind::Read
-//     } else {
-//         AccessKind::Write
-//     };
-//     insert_with_ancestors(sets, abs, kind);
-// }
 
 fn parse_openat(
     ctxt: &mut Context,

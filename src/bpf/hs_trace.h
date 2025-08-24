@@ -6,6 +6,14 @@ struct unique_file_t {
 	int ino;
 };
 
+struct sys_enter_fcntl_info_t {
+	long int pid_tgid;
+	long int syscall_nr;
+	int fd;
+	unsigned int cmd;
+	unsigned long arg;
+};
+
 struct sys_enter_info0_t {
 	long int pid_tgid;
 	long int syscall_nr;
