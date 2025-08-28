@@ -274,7 +274,7 @@ impl OpenFileTable {
         let open_file = self
             .table
             .get(&file)
-            .expect("expected open file {file} to retrieve status flags");
+            .expect(format!("expected open file {file} to retrieve status flags").as_str());
 
         open_file.status_flags
     }
@@ -283,7 +283,7 @@ impl OpenFileTable {
         let open_file = self
             .table
             .get_mut(&file)
-            .expect("expected open file {file} to modify status flags");
+            .expect(format!("expected open file {file} to modify status flags").as_str());
 
         open_file.status_flags = status_flags;
     }
@@ -314,6 +314,7 @@ impl Context {
 
     pub fn init_pid(&mut self, pid_tgid: u64, cwd: PathBuf) {
         self.cwd_map.insert(pid_tgid, cwd);
+        self.fd_tables.insert(upid_of(pid_tgid), HashMap::new());
     }
 
     pub fn do_clone(&mut self, parent_pid_tgid: u64, child_pid_tgid: u64) {
@@ -325,7 +326,7 @@ impl Context {
         let fd_table = self
             .fd_tables
             .get(&parent_pid)
-            .expect("missing fd table for {parent_pid}");
+            .expect(format!("missing fd table for {parent_pid}").as_str());
         self.fd_tables.insert(child_pid, fd_table.clone());
     }
 
@@ -342,7 +343,7 @@ impl Context {
         let fd_table = self
             .fd_tables
             .get_mut(&pid)
-            .expect("expected fd table for pid {pid}");
+            .expect(format!("expected fd table for pid {pid}").as_str());
         fd_table.insert(
             new_fd,
             FileDesc {
@@ -357,10 +358,10 @@ impl Context {
         let fd_table = self
             .fd_tables
             .get_mut(&pid)
-            .expect("expected fd table for pid {pid}");
+            .expect(format!("expected fd table for pid {pid}").as_str());
         let old_file_desc = fd_table
             .get(&old_fd)
-            .expect("expected old fd {old_fd} to be present for pid {pid}");
+            .expect(format!("expected old fd {old_fd} to be present for pid {pid}").as_str());
         let open_file = old_file_desc.open_file;
         fd_table.insert(
             new_fd,
@@ -378,7 +379,7 @@ impl Context {
         let fd_table = self
             .fd_tables
             .get_mut(&pid)
-            .expect("expected fd table for pid {pid}");
+            .expect(format!("expected fd table for pid {pid}").as_str());
         let fd_flags = if flags & libc::O_CLOEXEC as u32 > 0 {
             libc::FD_CLOEXEC as u32
         } else {
@@ -405,7 +406,7 @@ impl Context {
         let fd_table = self
             .fd_tables
             .get_mut(&pid)
-            .expect("expected fd table for pid {pid}");
+            .expect(format!("expected fd table for pid {pid}").as_str());
         fd_table.remove(&fd);
     }
 
@@ -414,10 +415,10 @@ impl Context {
         let fd_table = self
             .fd_tables
             .get_mut(&pid)
-            .expect("expected fd table for pid {pid}");
+            .expect(format!("expected fd table for pid {pid}").as_str());
         let file_desc = fd_table
             .get(&fd)
-            .expect("expected fd {fd} to be present for pid {pid}");
+            .expect(format!("expected fd {fd} to be present for pid {pid}").as_str());
         file_desc.fd_flags
     }
 
@@ -426,10 +427,10 @@ impl Context {
         let fd_table = self
             .fd_tables
             .get_mut(&pid)
-            .expect("expected fd table for pid {pid}");
+            .expect(format!("expected fd table for pid {pid}").as_str());
         let file_desc = fd_table
             .get_mut(&fd)
-            .expect("expected fd {fd} to be present for pid {pid}");
+            .expect(format!("expected fd {fd} to be present for pid {pid}").as_str());
         file_desc.fd_flags = fd_flags;
     }
 
@@ -438,12 +439,14 @@ impl Context {
         let fd_table = self
             .fd_tables
             .get(&pid)
-            .expect("expected fd table for pid {pid}");
-        let file_desc = fd_table.get(&fd).expect("expected fd for pid {pid}");
+            .expect(format!("expected fd table for pid {pid}").as_str());
+        let file_desc = fd_table
+            .get(&fd)
+            .expect(format!("expected fd for pid {pid}").as_str());
         let open_file = self
             .open_files
             .get_path(file_desc.open_file)
-            .expect("expected open file {file_desc.open_file}");
+            .expect(format!("expected open file {}", file_desc.open_file).as_str());
         open_file.path.clone()
     }
 }
@@ -545,7 +548,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             syscall_nr,
             flags,
         } => match syscall_nr {
-            libc::SYS_clone => parse_clone(&mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags),
+            libc::SYS_clone => parse_clone(&mut ctxt, pid_tgid, ret),
             _ => {}
         },
         SyscallInfo::Event1 {
@@ -560,9 +563,9 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             libc::SYS_inotify_add_watch => {
                 parse_sys_inotify_add_watch(&mut ctxt, &mut sets, pid_tgid, &path)
             }
-            libc::SYS_openat | libc::SYS_openat2 => parse_openat(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
-            ),
+            libc::SYS_openat | libc::SYS_openat2 => {
+                parse_openat(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, &path)
+            }
             // #[cfg(target_arch = "x86_64")]
             // libc::SYS_open => {
             //     let mut ctxt = CTXT.lock().unwrap();
@@ -571,27 +574,23 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             //         &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
             //     )
             // }
-            libc::SYS_chdir => parse_chdir(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
-            ),
+            libc::SYS_chdir => parse_chdir(&mut ctxt, &mut sets, pid_tgid, ret, &path),
             libc::SYS_symlinkat => parse_symlinkat(
                 &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
             ),
             // libc::SYS_symlink => {}
             // r path
             libc::SYS_execve | libc::SYS_statfs | libc::SYS_getxattr | libc::SYS_lgetxattr => {
-                parse_r_first_path_e1(
-                    &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
-                )
+                parse_r_first_path_e1(&mut ctxt, &mut sets, pid_tgid, &path)
             }
             // libc::SYS_stat => {}
             // libc::SYS_lstat => {}
             // libc::SYS_access => {}
             // libc::SYS_readlink => {}
             // w path
-            libc::SYS_truncate | libc::SYS_acct => parse_w_first_path_e1(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
-            ),
+            libc::SYS_truncate | libc::SYS_acct => {
+                parse_w_first_path_e1(&mut ctxt, &mut sets, pid_tgid, ret, &path)
+            }
             // libc::SYS_mkdir => {}
             // libc::SYS_rmdir => {}
             // libc::SYS_creat => {}
@@ -609,9 +608,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             | libc::SYS_readlinkat
             | libc::SYS_faccessat
             | libc::SYS_faccessat2
-            | libc::SYS_execveat => parse_r_fd_path_e1(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
-            ),
+            | libc::SYS_execveat => parse_r_fd_path_e1(&mut ctxt, &mut sets, pid_tgid, fd, &path),
             // w fd path
             libc::SYS_linkat
             | libc::SYS_unlinkat
@@ -764,7 +761,6 @@ fn parse_openat(
     sets: &mut RWSet,
     pid_tgid: u64,
     ret: i64,
-    syscall_nr: i64,
     flags: u32,
     fd: i32,
     path: &str,
@@ -772,11 +768,18 @@ fn parse_openat(
     let abs = convert_absolute(&ctxt, pid_tgid, &path, Some(fd));
     if ret >= 0 {
         let new_fd = ret as i32;
-        ctxt.map_fds((pid_tgid & 0xFFFFFFFF) as i32, new_fd, abs.clone());
-
-        if (flags & libc::O_DIRECTORY as u32) != 0 {
-            ctxt.dirfd_map.insert((pid_tgid, new_fd), abs.clone());
+        let mut fd_flags = 0;
+        if flags & libc::O_CLOEXEC as u32 != 0 {
+            fd_flags |= libc::FD_CLOEXEC as u32;
         }
+        let status_flags = flags & !(libc::O_CLOEXEC as u32);
+
+        ctxt.open_file(pid_tgid, new_fd, fd_flags, status_flags, abs.clone());
+
+        // TODO: Why this is needed?
+        // if (flags & libc::O_DIRECTORY as u32) != 0 {
+        //     ctxt.dirfd_map.insert((pid_tgid, new_fd), abs.clone());
+        // }
     }
 
     if ret < 0 {
@@ -811,14 +814,24 @@ fn parse_open(
     sets: &mut RWSet,
     pid_tgid: u64,
     ret: i64,
-    syscall_nr: i64,
     flags: u32,
-    fd: i32,
     path: &str,
 ) {
     let abs = convert_absolute(&ctxt, pid_tgid, &path, None);
-    if ret >= 0 && (flags & libc::O_DIRECTORY as u32) != 0 {
-        ctxt.dirfd_map.insert((pid_tgid, ret as i32), abs.clone());
+    // TODO: Why is this needed?
+    // if ret >= 0 && (flags & libc::O_DIRECTORY as u32) != 0 {
+    //     ctxt.dirfd_map.insert((pid_tgid, ret as i32), abs.clone());
+    // }
+
+    if ret >= 0 {
+        let new_fd = ret as i32;
+        let mut fd_flags = 0;
+        if flags & libc::O_CLOEXEC as u32 != 0 {
+            fd_flags |= libc::FD_CLOEXEC as u32;
+        }
+        let status_flags = flags & !(libc::O_CLOEXEC as u32);
+
+        ctxt.open_file(pid_tgid, new_fd, fd_flags, status_flags, abs.clone());
     }
 
     let kind = if ret < 0 {
@@ -831,16 +844,7 @@ fn parse_open(
     insert_with_ancestors(sets, abs, kind);
 }
 
-fn parse_chdir(
-    ctxt: &mut Context,
-    sets: &mut RWSet,
-    pid_tgid: u64,
-    ret: i64,
-    syscall_nr: i64,
-    flags: u32,
-    fd: i32,
-    path: &str,
-) {
+fn parse_chdir(ctxt: &mut Context, sets: &mut RWSet, pid_tgid: u64, ret: i64, path: &str) {
     let abs = convert_absolute(ctxt, pid_tgid, &path, None);
     if ret == 0 {
         ctxt.cwd_map.insert(pid_tgid, abs.clone());
@@ -848,19 +852,10 @@ fn parse_chdir(
     insert_with_ancestors(sets, abs, AccessKind::Read);
 }
 
-fn parse_clone(
-    ctxt: &mut Context,
-    sets: &mut RWSet,
-    pid_tgid: u64,
-    ret: i64,
-    syscall_nr: i64,
-    flags: u32,
-) {
+fn parse_clone(ctxt: &mut Context, pid_tgid: u64, ret: i64) {
     if ret < 0 {
         return;
     };
-    let pid = (pid_tgid & 0xFFFFFFFF) as i32;
-    let r = ret as i32;
     ctxt.do_clone(pid_tgid, ret as u64)
 }
 
@@ -884,16 +879,7 @@ fn parse_symlinkat(
     insert_with_ancestors(sets, abs, kind);
 }
 
-fn parse_r_first_path_e1(
-    ctxt: &mut Context,
-    sets: &mut RWSet,
-    pid_tgid: u64,
-    ret: i64,
-    syscall_nr: i64,
-    flags: u32,
-    fd: i32,
-    path: &str,
-) {
+fn parse_r_first_path_e1(ctxt: &mut Context, sets: &mut RWSet, pid_tgid: u64, path: &str) {
     if path.is_empty() {
         return;
     }
@@ -907,9 +893,6 @@ fn parse_w_first_path_e1(
     sets: &mut RWSet,
     pid_tgid: u64,
     ret: i64,
-    syscall_nr: i64,
-    flags: u32,
-    fd: i32,
     path: &str,
 ) {
     if path.is_empty() {
@@ -926,16 +909,7 @@ fn parse_w_first_path_e1(
     insert_with_ancestors(sets, abs, kind);
 }
 
-fn parse_r_fd_path_e1(
-    ctxt: &mut Context,
-    sets: &mut RWSet,
-    pid_tgid: u64,
-    ret: i64,
-    syscall_nr: i64,
-    flags: u32,
-    fd: i32,
-    path: &str,
-) {
+fn parse_r_fd_path_e1(ctxt: &mut Context, sets: &mut RWSet, pid_tgid: u64, fd: i32, path: &str) {
     if path.is_empty() {
         return;
     }
@@ -1014,37 +988,20 @@ pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<
                 let mut logs = LOGS.lock().unwrap();
                 logs.update_log(pid_tgid, SyscallEvent::Enter0(e))
             }
-            Ok(Some(SyscallEvent::Enter1(mut e))) => {
+            Ok(Some(SyscallEvent::Enter1(e))) => {
                 let pid_tgid = e.pid_tgid as u64;
-                {
-                    let ctxt = CTXT.lock().unwrap();
-                    if libc::SYS_dup == e.syscall_nr {
-                        let pid = (e.pid_tgid & 0xFFFFFFFF) as i32;
-                        if let Some(p) = ctxt.get_path_from_fd(pid, e.fd) {
-                            let path = p.to_str().unwrap().as_bytes();
-                            let len = e.path.len().min(path.len());
-                            e.path[..len].copy_from_slice(path);
-                        }
-                    }
-                }
                 let mut logs = LOGS.lock().unwrap();
                 logs.update_log(pid_tgid, SyscallEvent::Enter1(e))
             }
-            Ok(Some(SyscallEvent::Enter2(mut e))) => {
+            Ok(Some(SyscallEvent::Enter2(e))) => {
                 let pid_tgid = e.pid_tgid as u64;
-                {
-                    let ctxt = CTXT.lock().unwrap();
-                    if libc::SYS_dup3 == e.syscall_nr {
-                        let pid = (e.pid_tgid & 0xFFFFFFFF) as i32;
-                        if let Some(p) = ctxt.get_path_from_fd(pid, e.fd) {
-                            let path = p.to_str().unwrap().as_bytes();
-                            let len = e.path.len().min(path.len());
-                            e.path[..len].copy_from_slice(path);
-                        }
-                    }
-                }
                 let mut logs = LOGS.lock().unwrap();
                 logs.update_log(pid_tgid, SyscallEvent::Enter2(e))
+            }
+            Ok(Some(SyscallEvent::EnterFcntl(e))) => {
+                let pid_tgid = e.pid_tgid as u64;
+                let mut logs = LOGS.lock().unwrap();
+                logs.update_log(pid_tgid, SyscallEvent::EnterFcntl(e))
             }
             Ok(Some(SyscallEvent::Exit(exit_info))) => {
                 let pid_tgid = exit_info.pid_tgid as u64;

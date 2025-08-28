@@ -110,12 +110,17 @@ fn main() -> Result<()> {
         let mut ctxt = CTXT.lock().unwrap();
         ctxt.init_pid(pid_tgid, cwd.clone());
         // Also initialize with just the pid (lower 32 bits) since some events might use that
-        ctxt.init_pid(target_pid as u64, cwd.clone());
-        for entry in std::fs::read_dir(format!("/proc/{}/fd", target_pid))? {
+        // ctxt.init_pid(target_pid as u64, cwd.clone());
+        for entry in std::fs::read_dir(format!("/proc/{target_pid}/fd"))? {
             let entry = entry?;
             let fd: i32 = entry.file_name().to_string_lossy().parse().unwrap();
             let path = std::fs::read_link(entry.path())?;
-            ctxt.map_fds(target_pid, fd, path);
+            let fdinfo = std::fs::read_to_string(format!("/proc/{target_pid}/fdinfo/{fd}"))?;
+            let start = fdinfo.find("flags:").unwrap() + 6;
+            let end = start + fdinfo[start..].find('\n').unwrap();
+            let status_flags = fdinfo[start..end].trim().parse::<u32>()?;
+
+            ctxt.open_file(pid_tgid, fd, 0, status_flags, path);
         }
     }
 
