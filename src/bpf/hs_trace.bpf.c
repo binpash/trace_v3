@@ -475,9 +475,6 @@ BPF_PROG(hs_trace_sys_exit)
 #ifdef __NR_inotify_add_watch
 	case __NR_inotify_add_watch:
 #endif
-#ifdef __NR_execve
-	case __NR_execve: /* r_first_path_set */
-#endif
 #ifdef __NR_statfs
 	case __NR_statfs:
 #endif
@@ -579,6 +576,9 @@ BPF_PROG(hs_trace_sys_exit)
 #endif
 #ifdef __NR_futimeat
 	case __NR_futimeat:
+#endif
+#ifdef __NR_execve
+	case __NR_execve: /* r_first_path_set */
 #endif
 		break;
 	default:
