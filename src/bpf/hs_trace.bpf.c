@@ -310,23 +310,23 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 	}
 	bpf_printk("update pid set with %d\n", c_pid);
 
-	struct sys_enter_info0_t *enter0;
-	if ((enter0 = bpf_ringbuf_reserve(
-		 &output, sizeof(struct sys_enter_info0_t), 0)) == NULL) {
-		// bpf_printk(
-		//     "FAILED to reserve space in ring buffer for event_type ==
-		//     " "SYS_ENTER0\n");
-		u32 key = 0;
-		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
-		if (missed) {
-			__sync_fetch_and_add(missed, 1);
-		}
-		return 0;
-	}
-	enter0->pid_tgid = p_pid_tgid;
-	enter0->syscall_nr = __NR_clone;
-	enter0->flags = 0;
-	bpf_ringbuf_submit(enter0, 0);
+	// struct sys_enter_info0_t *enter0;
+	// if ((enter0 = bpf_ringbuf_reserve(
+	// 	 &output, sizeof(struct sys_enter_info0_t), 0)) == NULL) {
+	// 	// bpf_printk(
+	// 	//     "FAILED to reserve space in ring buffer for event_type ==
+	// 	//     " "SYS_ENTER0\n");
+	// 	u32 key = 0;
+	// 	u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+	// 	if (missed) {
+	// 		__sync_fetch_and_add(missed, 1);
+	// 	}
+	// 	return 0;
+	// }
+	// enter0->pid_tgid = p_pid_tgid;
+	// enter0->syscall_nr = __NR_clone;
+	// enter0->flags = 0;
+	// bpf_ringbuf_submit(enter0, 0);
 
 	struct sys_exit_info_t *exit;
 	if ((exit = bpf_ringbuf_reserve(&output, sizeof(struct sys_exit_info_t),
@@ -417,6 +417,12 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		fd = (int)PT_REGS_PARM2_CORE(regs);
 		path = (char *)PT_REGS_PARM3_CORE(regs);
 		event_type = SYS_ENTER1;
+		break;
+#endif
+#ifdef __NR_clone
+	case __NR_clone:
+		flags = (int)PT_REGS_PARM3_CORE(regs);
+		event_type = SYS_ENTER0;
 		break;
 #endif
 #ifdef __NR_symlink
@@ -710,6 +716,12 @@ BPF_PROG(hs_trace_sys_exit)
 	// bpf_printk("sys_exit event for syscall %ld\n", syscall_id);
 
 	switch (syscall_id) {
+#ifdef __NR_clone
+	case __NR_clone:
+	if (((struct sys_exit_args *)ctx)->ret > 0) {
+		return 0;
+	};
+#endif
 #ifdef __NR_openat
 	case __NR_openat: /* individually */
 #endif

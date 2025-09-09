@@ -484,11 +484,6 @@ impl Context {
             .expect(format!("expected open file {}", file_desc.open_file).as_str());
         open_file.path.clone()
     }
-    pub fn check_empty(&self) {
-        println!("Checking if close set it empty");
-        let a = &self.open_files;
-        println!("{a:#?}")
-    }
 }
 
 pub struct RWSet {
@@ -683,7 +678,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             libc::SYS_renameat | libc::SYS_renameat2 => parse_renameat(
                 &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path, fd2, &path2,
             ),
-            libc::SYS_pipe2 => parse_pipe2(&mut ctxt, pid_tgid, flags, fd, &path, fd2),
+            libc::SYS_pipe2 => parse_pipe2(&mut ctxt,&mut sets, pid_tgid, flags, fd, &path, fd2),
             _ => {}
         },
         SyscallInfo::EventFcntl {
@@ -817,10 +812,12 @@ fn parse_dup23(ctxt: &mut Context, pid_tgid: u64, ret: i64, flags: u32, fd: i32,
     }
 }
 
-fn parse_pipe2(ctxt: &mut Context, pid_tgid: u64, flags: u32, fd: i32, path: &str, fd2: i32) {
+fn parse_pipe2(ctxt: &mut Context, sets: &mut RWSet, pid_tgid: u64, flags: u32, fd: i32, path: &str, fd2: i32) {
     let path = convert_absolute(ctxt, pid_tgid, path, None);
-    println!("{path:#?}");
-    ctxt.create_pipe(pid_tgid, fd, fd2, flags, path);
+    ctxt.create_pipe(pid_tgid, fd, fd2, flags, path.clone());
+    insert_with_ancestors(sets, path.clone(), AccessKind::Read);
+    insert_with_ancestors(sets, path, AccessKind::Write);
+
 }
 
 fn parse_sys_inotify_add_watch(ctxt: &mut Context, sets: &mut RWSet, pid_tgid: u64, path: &str) {

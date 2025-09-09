@@ -223,6 +223,5 @@ fn main() -> Result<()> {
     let mut sets = SETS.lock().unwrap();
 
     sets.dump_sets();   
-    ctxt.check_empty();
     Ok(())
 }
