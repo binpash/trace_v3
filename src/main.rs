@@ -164,6 +164,8 @@ fn main() -> Result<()> {
             SyscallEvent::Enter1(unsafe { *data.as_ptr().cast::<sys_enter_info1_t>() })
         } else if data.len() == size_of::<sys_enter_info2_t>() {
             SyscallEvent::Enter2(unsafe { *data.as_ptr().cast::<sys_enter_info2_t>() })
+        } else if data.len() == size_of::<sys_enter_fcntl_info_t>() {
+            SyscallEvent::EnterFcntl(unsafe { *data.as_ptr().cast::<sys_enter_fcntl_info_t>() })
         } else if data.len() == size_of::<sys_exit_info_t>() {
             SyscallEvent::Exit(unsafe { *data.as_ptr().cast::<sys_exit_info_t>() })
         } else {
@@ -222,6 +224,7 @@ fn main() -> Result<()> {
 
     let mut sets = SETS.lock().unwrap();
 
-    sets.dump_sets();   
+    sets.dump_sets();
+    // ctxt.check_empty();
     Ok(())
 }

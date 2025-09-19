@@ -655,9 +655,9 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
                 &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
             ),
             // libc::SYS_futimeat => {}
-            libc::SYS_memfd_create => parse_memfd_create(
-                &mut ctxt, &mut sets, pid_tgid, ret, flags, fd, &path,
-            ),
+            libc::SYS_memfd_create => {
+                parse_memfd_create(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, &path)
+            }
 
             libc::SYS_close => parse_close(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, &path),
             _ => {}
@@ -678,7 +678,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             libc::SYS_renameat | libc::SYS_renameat2 => parse_renameat(
                 &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path, fd2, &path2,
             ),
-            libc::SYS_pipe2 => parse_pipe2(&mut ctxt,&mut sets, pid_tgid, flags, fd, &path, fd2),
+            libc::SYS_pipe2 => parse_pipe2(&mut ctxt, &mut sets, pid_tgid, flags, fd, &path, fd2),
             _ => {}
         },
         SyscallInfo::EventFcntl {
@@ -812,12 +812,19 @@ fn parse_dup23(ctxt: &mut Context, pid_tgid: u64, ret: i64, flags: u32, fd: i32,
     }
 }
 
-fn parse_pipe2(ctxt: &mut Context, sets: &mut RWSet, pid_tgid: u64, flags: u32, fd: i32, path: &str, fd2: i32) {
+fn parse_pipe2(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid_tgid: u64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+    fd2: i32,
+) {
     let path = convert_absolute(ctxt, pid_tgid, path, None);
     ctxt.create_pipe(pid_tgid, fd, fd2, flags, path.clone());
     insert_with_ancestors(sets, path.clone(), AccessKind::Read);
     insert_with_ancestors(sets, path, AccessKind::Write);
-
 }
 
 fn parse_sys_inotify_add_watch(ctxt: &mut Context, sets: &mut RWSet, pid_tgid: u64, path: &str) {
@@ -895,6 +902,7 @@ fn parse_close(
         ctxt.close_file(pid_tgid, fd);
     }
 }
+
 fn parse_open(
     ctxt: &mut Context,
     sets: &mut RWSet,
@@ -1132,6 +1140,16 @@ pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<
                                 fd2: e.fd2,
                                 path2: String::from_utf8_lossy(path2_cstr.to_bytes()).to_string(),
                             });
+                        }
+                        SyscallEvent::EnterFcntl(e) => {
+                            on_event_update_rw_sets(SyscallInfo::EventFcntl {
+                                pid_tgid: e.pid_tgid as u64,
+                                ret: exit_info.ret,
+                                syscall_nr: e.syscall_nr,
+                                fd: e.fd,
+                                cmd: e.cmd,
+                                arg: e.arg,
+                            })
                         }
                         _ => {}
                     };
