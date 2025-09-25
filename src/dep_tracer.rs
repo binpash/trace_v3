@@ -173,6 +173,13 @@ impl Logs {
             log: HashMap::new(),
         }
     }
+    pub fn size(&self) {
+        for (pid_tgid, vec) in &self.log{
+            println!("{pid_tgid}");
+            let a = vec.len();
+            println!("{a}");
+        };
+    }
     pub fn update_log(&mut self, pid_tgid: u64, event: SyscallEvent) {
         self.log
             .entry(pid_tgid)
@@ -659,7 +666,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
                 parse_memfd_create(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, &path)
             }
 
-            libc::SYS_close => parse_close(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, &path),
+            // libc::SYS_close => parse_close(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, &path),
             _ => {}
         },
         SyscallInfo::Event2 {

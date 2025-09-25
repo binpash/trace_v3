@@ -4,9 +4,7 @@ use libbpf_sys::{
     BPF_FUNC_map_lookup_percpu_elem, bpf_map__fd, bpf_map__lookup_elem, bpf_map_lookup_elem,
 };
 use libc::{
-    O_WRONLY, SA_NOCLDSTOP, SA_RESTART, SIG_BLOCK, SIGCHLD, SIGUSR1, STDERR_FILENO, STDOUT_FILENO,
-    c_int, dup2, kill, open, sigaction, sigaddset, sigemptyset, sighandler_t, sigprocmask,
-    sigset_t, sigwait, waitpid,
+    c_int, dup2, kill, open, sigaction, sigaddset, sigemptyset, sighandler_t, sigprocmask, sigset_t, sigwait, waitpid, O_WRONLY, SA_NOCLDSTOP, SA_RESTART, SIGCHLD, SIGUSR1, SIG_BLOCK, SIG_UNBLOCK, STDERR_FILENO, STDOUT_FILENO
 };
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -81,12 +79,19 @@ fn main() -> Result<()> {
             let mut set: sigset_t = zeroed();
             sigemptyset(&mut set);
             sigaddset(&mut set, SIGUSR1);
+
+            // block SIGUSR1, so it can become pending
             sigprocmask(SIG_BLOCK, &mut set, ptr::null_mut());
 
+            // wait on SIGUSR1
             let mut sig = zeroed();
             if sigwait(&mut set, &mut sig) != 0 {
                 Err(Error::new(ErrorKind::Other, "couldn't sigwait"))?;
             }
+
+            // unblock SIGUSR1
+            sigemptyset(&mut set);
+            sigprocmask(SIG_UNBLOCK, &mut set, ptr::null_mut());
 
             let cstr_args: Vec<CString> = args
                 .skip(1)
@@ -185,13 +190,17 @@ fn main() -> Result<()> {
     }
     let key = 0u32.to_ne_bytes();
     let mut program_total = 0;
+    let mut prev_missed = 0;
+    let mut count = 0;
     while RUNNING.load(Ordering::Relaxed) {
-        match rb.poll(Duration::from_millis(10)) {
+        match rb.poll(Duration::from_micros(25)) {
             Ok(()) => {}
             Err(_) => {}
         }
+        
         if let Some(count_per_cpu) = skel.maps.missed_events.lookup_percpu(&key, MapFlags::ANY)? {
             let mut total = 0;
+            
             for missed in count_per_cpu {
                 let slice = &missed[..size_of::<u32>()];
                 let bytes: [u8; 4] = slice
@@ -200,10 +209,20 @@ fn main() -> Result<()> {
                 let count = u32::from_ne_bytes(bytes);
                 total += count;
             }
-            if total != 0 {
-                println!("{total} missed events in this poll");
+            let diff = total - prev_missed;
+            if diff != 0 {
+                println!("{diff} missed events in this poll,{count} before, {total} - {prev_missed}");
+                let logs = LOGS.lock().unwrap();
+                count = 0;
+                logs.size();
+
             }
-            program_total += total;
+            else{
+                count +=1;
+            }
+            program_total += diff;
+            prev_missed = total;
+            
         };
     }
     println!("{program_total} missed events during the duration of the program");
