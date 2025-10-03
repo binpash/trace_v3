@@ -4,27 +4,29 @@ use libbpf_sys::{
     BPF_FUNC_map_lookup_percpu_elem, bpf_map__fd, bpf_map__lookup_elem, bpf_map_lookup_elem,
 };
 use libc::{
-    c_int, dup2, kill, open, sigaction, sigaddset, sigemptyset, sighandler_t, sigprocmask, sigset_t, sigwait, waitpid, O_WRONLY, SA_NOCLDSTOP, SA_RESTART, SIGCHLD, SIGUSR1, SIG_BLOCK, SIG_UNBLOCK, STDERR_FILENO, STDOUT_FILENO
+    O_WRONLY, SA_NOCLDSTOP, SA_RESTART, SIG_BLOCK, SIG_UNBLOCK, SIGCHLD, SIGUSR1, STDERR_FILENO,
+    STDOUT_FILENO, c_int, dup2, kill, open, sigaction, sigaddset, sigemptyset, sighandler_t,
+    sigprocmask, sigset_t, sigwait, waitpid,
 };
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
-use std::mem::{MaybeUninit, size_of, zeroed};
+use std::mem::{MaybeUninit, offset_of, size_of, zeroed};
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::raw::c_char;
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::{env, ptr, fs};
 use std::sync::mpsc;
 use std::thread;
-use std::path::Path;
 use std::time::Duration;
+use std::{env, fs, ptr};
 // use clap::Parser;
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
-use nix::unistd::{setgroups, setresgid, setresuid, Gid, Uid, getuid};
+use nix::unistd::{Gid, Uid, getuid, setgroups, setresgid, setresuid};
 // use plain::Plain;
 // use time::OffsetDateTime;
 // use time::macros::format_description;
@@ -55,13 +57,13 @@ fn find_sudo_invoker() -> Option<(u32, u32)> {
     let sudo = env::var("SUDO_UID").ok()?;
     let prev_uid: u32 = match sudo.trim().parse() {
         Ok(num) => num,
-        Err(_) => 0
+        Err(_) => 0,
     };
 
     let group = env::var("SUDO_GID").ok()?;
     let prev_grp: u32 = match group.trim().parse() {
         Ok(num) => num,
-        Err(_) => 0
+        Err(_) => 0,
     };
     Some((prev_uid, prev_grp))
 }
@@ -118,13 +120,13 @@ fn main() -> Result<()> {
             let prog = &cstr_args[0];
 
             match find_sudo_invoker() {
-                Some((uid,gid) ) => {
+                Some((uid, gid)) => {
                     let target_uid = Uid::from_raw(uid);
                     let target_gid = Gid::from_raw(gid);
                     setgroups(&[]).expect("setgroups");
-                    
+
                     setresgid(target_gid, target_gid, target_gid).expect("setresgid");
-                    setresuid(target_uid, target_uid, target_uid).expect("setresuid"); 
+                    setresuid(target_uid, target_uid, target_uid).expect("setresuid");
                 }
                 None => {}
             }
@@ -191,18 +193,47 @@ fn main() -> Result<()> {
     // setup ringbuf
     let mut rb_builder = RingBufferBuilder::new();
     rb_builder.add(&skel.maps.output, |data| {
-        let event = if data.len() == size_of::<sys_enter_info0_t>() {
-            SyscallEvent::Enter0(unsafe { *data.as_ptr().cast::<sys_enter_info0_t>() })
-        } else if data.len() == size_of::<sys_enter_info1_t>() {
-            SyscallEvent::Enter1(unsafe { *data.as_ptr().cast::<sys_enter_info1_t>() })
-        } else if data.len() == size_of::<sys_enter_info2_t>() {
-            SyscallEvent::Enter2(unsafe { *data.as_ptr().cast::<sys_enter_info2_t>() })
-        } else if data.len() == size_of::<sys_enter_fcntl_info_t>() {
-            SyscallEvent::EnterFcntl(unsafe { *data.as_ptr().cast::<sys_enter_fcntl_info_t>() })
-        } else if data.len() == size_of::<sys_exit_info_t>() {
-            SyscallEvent::Exit(unsafe { *data.as_ptr().cast::<sys_exit_info_t>() })
+        let event = if data.len() == size_of::<sys_exit_info_t>() {
+            let header = unsafe { &*data.as_ptr().cast::<sys_exit_info_t>() };
+            SyscallEvent::Exit {
+                pid_tgid: header.pid_tgid,
+                ret: header.ret,
+            }
         } else {
-            panic!("invalid event size {}", data.len());
+            let header_len = size_of::<sys_enter_info_t>();
+            assert!(data.len() >= header_len);
+
+            let header = unsafe { &*data.as_ptr().cast::<sys_enter_info_t>() };
+
+            let path1_len = header.path1_len as usize;
+            let path2_len = header.path2_len as usize;
+
+            let path1_data = &data[header_len..header_len + path1_len];
+            let path2_data = &data[header_len + path1_len..header_len + path1_len + path2_len];
+
+            let path1 = CStr::from_bytes_with_nul(path1_data)
+                .expect("expected null terminated string")
+                .to_str()
+                .expect("invalid utf8")
+                .to_owned();
+            let path2 = CStr::from_bytes_with_nul(path2_data)
+                .expect("expected null terminated string")
+                .to_str()
+                .expect("invalid utf8")
+                .to_owned();
+
+            SyscallEvent::Enter {
+                pid_tgid,
+                syscall_nr: header.syscall_nr,
+                event_type: header.event_type,
+                flags: header.flags,
+                cmd: header.cmd,
+                arg: header.arg,
+                fd: header.fd,
+                fd2: header.fd2,
+                path1: path1,
+                path2: path2,
+            }
         };
         // handle all cases
         match sender.send(Some(event)) {
@@ -225,10 +256,10 @@ fn main() -> Result<()> {
             Ok(()) => {}
             Err(_) => {}
         }
-        
+
         if let Some(count_per_cpu) = skel.maps.missed_events.lookup_percpu(&key, MapFlags::ANY)? {
             let mut total = 0;
-            
+
             for missed in count_per_cpu {
                 let slice = &missed[..size_of::<u32>()];
                 let bytes: [u8; 4] = slice
@@ -239,12 +270,18 @@ fn main() -> Result<()> {
             }
             let diff = total - prev_missed;
             if diff != 0 {
-                println!("{diff} missed events in this poll, {total} - {prev_missed}");
+                println!(
+                    "{diff} missed events in this poll,{count} before, {total} - {prev_missed}"
+                );
+                let logs = LOGS.lock().unwrap();
+                count = 0;
+                logs.size();
+            } else {
+                count += 1;
             }
-            
+
             program_total += diff;
             prev_missed = total;
-            
         };
     }
     println!("{program_total} missed events during the duration of the program");
@@ -271,16 +308,16 @@ fn main() -> Result<()> {
 
     if cfg!(debug_assertions) {
         for dir in potential_added_dirs {
-        let path = Path::new(dir);
-        if path.is_dir() {
-            println!("Removing directory: {}", dir);
-            if let Err(e) = fs::remove_dir_all(path) {
-                eprintln!("Failed to remove {}: {}", dir, e);
+            let path = Path::new(dir);
+            if path.is_dir() {
+                println!("Removing directory: {}", dir);
+                if let Err(e) = fs::remove_dir_all(path) {
+                    eprintln!("Failed to remove {}: {}", dir, e);
+                }
+            } else {
+                println!("No such directory: {}", dir);
             }
-        } else {
-            println!("No such directory: {}", dir);
         }
-        }
-    } 
+    }
     Ok(())
 }

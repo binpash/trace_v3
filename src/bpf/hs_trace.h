@@ -22,7 +22,7 @@ enum sys_enter_event_type_t {
 };
 
 struct sys_enter_info_t {
-	long pid_tgid;
+	unsigned long pid_tgid;
 	long syscall_nr;
 	enum sys_enter_event_type_t event_type;
 	unsigned int flags; // for special handling: open*, clone, linkat, etc.
@@ -37,7 +37,7 @@ struct sys_enter_info_t {
 };
 
 struct sys_exit_info_t {
-	long int pid_tgid;
+	unsigned long pid_tgid;
 	long int ret;
 };
 

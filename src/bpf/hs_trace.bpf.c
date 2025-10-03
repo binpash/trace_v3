@@ -134,6 +134,9 @@ BPF_PROG(hs_trace_enter_memfd_create)
 	int len1 =
 	    BPF_SNPRINTF(path1, PATH_MAX, "memfd:%s",
 	                 ((struct sys_enter_memfd_create_args *)ctx)->uname);
+	if (len1 > PATH_MAX) {
+		len1 = PATH_MAX;
+	}
 
 	struct sys_enter_info_t *enter1;
 
@@ -160,7 +163,9 @@ BPF_PROG(hs_trace_enter_memfd_create)
 	enter1->path1_len = len1;
 	enter1->path2_len = 0;
 
-	__builtin_memcpy(enter1->pathbuf, path1, len1);
+	BPF_SNPRINTF(enter1->pathbuf, len1, "memfd:%s",
+	             ((struct sys_enter_memfd_create_args *)ctx)->uname);
+	// __builtin_memcpy(enter1->pathbuf, path1, len1);
 
 	bpf_ringbuf_submit(enter1, 0);
 	return 0;
@@ -287,8 +292,10 @@ BPF_PROG(hs_trace_create_pipe_exit)
 	enter2->path1_len = len1;
 	enter2->path2_len = len1;
 
-	__builtin_memcpy(enter2->pathbuf, path1, len1);
-	__builtin_memcpy(enter2->pathbuf + len1, path1, len1);
+	BPF_SNPRINTF(enter2->pathbuf, len1, "pipe:[%d]", ino);
+	BPF_SNPRINTF(enter2->pathbuf + len1, len1, "pipe:[%d]", ino);
+	// __builtin_memcpy(enter2->pathbuf, path1, len1);
+	// __builtin_memcpy(enter2->pathbuf + len1, path1, len1);
 
 	bpf_ringbuf_submit(enter2, 0);
 
@@ -714,8 +721,10 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	enter->path1_len = len1;
 	enter->path2_len = len2;
 
-	__builtin_memcpy(enter->pathbuf, path1, len1);
-	__builtin_memcpy(enter->pathbuf + len1, path2, len2);
+	bpf_probe_read_user_str(enter->pathbuf, len1, pathptr1);
+	bpf_probe_read_user_str(enter->pathbuf + len1, len2, pathptr2);
+	// __builtin_memcpy(enter->pathbuf, path1, len1);
+	// __builtin_memcpy(enter->pathbuf + len1, path2, len2);
 
 	bpf_ringbuf_submit(enter, 0);
 

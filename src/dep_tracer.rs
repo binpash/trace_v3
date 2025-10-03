@@ -8,7 +8,7 @@ use std::fmt;
 use std::fmt::Display;
 use std::path::{Component, PathBuf};
 use std::sync::mpsc;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use syscallnrs::syscall_of_nr;
 use trace_v3::*;
 
@@ -161,72 +161,46 @@ pub fn utid_of(pid_tgid: u64) -> u32 {
 
 #[derive(Debug)]
 pub enum SyscallEvent {
-    Enter0(sys_enter_info0_t),
-    Enter1(sys_enter_info1_t),
-    Enter2(sys_enter_info2_t),
-    EnterFcntl(sys_enter_fcntl_info_t),
-    Exit(sys_exit_info_t),
+    Enter {
+        pid_tgid: u64,
+        syscall_nr: i64,
+        event_type: u32,
+        flags: u32,
+        cmd: u32,
+        arg: u64,
+        fd: i32,
+        fd2: i32,
+        path1: String,
+        path2: String,
+    },
+    Exit {
+        pid_tgid: u64,
+        ret: i64,
+    },
 }
 impl Display for SyscallEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SyscallEvent::Enter0(e) => {
-                write!(
-                    f,
-                    "{}(flags={})",
-                    match syscall_of_nr(e.syscall_nr as u64) {
-                        Some(syscall) => syscall,
-                        None => "Syscall not found",
-                    },
-                    e.flags
-                )
-            }
-            SyscallEvent::Enter1(e) => {
-                let cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
-                write!(
-                    f,
-                    "{}(fd={},path={},flags={})",
-                    match syscall_of_nr(e.syscall_nr as u64) {
-                        Some(syscall) => syscall,
-                        None => "Syscall not found",
-                    },
-                    e.fd,
-                    cstr.to_string_lossy(),
-                    e.flags
-                )
-            }
-            SyscallEvent::Enter2(e) => {
-                let cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
-                let cstr2 = unsafe { CStr::from_ptr(e.path2.as_ptr()) };
+            SyscallEvent::Enter {
+                pid_tgid: _,
+                syscall_nr,
+                event_type: _,
+                flags,
+                cmd: _,
+                arg: _,
+                fd,
+                fd2,
+                path1,
+                path2,
+            } => {
                 write!(
                     f,
                     "{}(fd={},path={},fd2={},path2={},flags={})",
-                    match syscall_of_nr(e.syscall_nr as u64) {
-                        Some(syscall) => syscall,
-                        None => "Syscall not found",
-                    },
-                    e.fd,
-                    cstr.to_string_lossy(),
-                    e.fd2,
-                    cstr2.to_string_lossy(),
-                    e.flags
+                    syscall_nr, fd, path1, fd2, path2, flags
                 )
             }
-            SyscallEvent::EnterFcntl(e) => {
-                write!(
-                    f,
-                    "{}(fd={},cmd={},arg={})",
-                    match syscall_of_nr(e.syscall_nr as u64) {
-                        Some(syscall) => syscall,
-                        None => "Syscall not found",
-                    },
-                    e.fd,
-                    e.cmd,
-                    e.arg
-                )
-            }
-            SyscallEvent::Exit(e) => {
-                writeln!(f, " -> {}", e.ret)
+            SyscallEvent::Exit { pid_tgid: _, ret } => {
+                writeln!(f, " -> {}", ret)
             }
         }
     }
@@ -244,7 +218,7 @@ impl Logs {
     }
     pub fn size(&self) {
         for (pid_tgid, vec) in &self.log {
-            //println!("{pid_tgid}");
+            println!("{pid_tgid}");
             let a = vec.len();
             println!("{a}");
         }
@@ -585,7 +559,7 @@ pub static CTXT: Lazy<Mutex<Context>> = Lazy::new(|| Mutex::new(Context::new()))
 pub static SETS: Lazy<Mutex<RWSet>> = Lazy::new(|| Mutex::new(RWSet::new()));
 pub static LOGS: Lazy<Mutex<Logs>> = Lazy::new(|| Mutex::new(Logs::new()));
 
-enum SyscallInfo {
+enum SyscallInfo<'a> {
     Event0 {
         pid_tgid: u64,
         ret: i64,
@@ -598,7 +572,7 @@ enum SyscallInfo {
         syscall_nr: i64,
         flags: u32,
         fd: i32,
-        path: String,
+        path: &'a str,
     },
     Event2 {
         pid_tgid: u64,
@@ -606,9 +580,9 @@ enum SyscallInfo {
         syscall_nr: i64,
         flags: u32,
         fd: i32,
-        path: String,
+        path: &'a str,
         fd2: i32,
-        path2: String,
+        path2: &'a str,
     },
     EventFcntl {
         pid_tgid: u64,
@@ -628,7 +602,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             pid_tgid,
             ret,
             syscall_nr,
-            flags,
+            flags: _,
         } => match syscall_nr {
             libc::SYS_clone => parse_clone(&mut ctxt, pid_tgid, ret),
             _ => {}
@@ -643,10 +617,10 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
         } => match syscall_nr {
             libc::SYS_dup => parse_dup(&mut ctxt, pid_tgid, ret, fd),
             libc::SYS_inotify_add_watch => {
-                parse_sys_inotify_add_watch(&mut ctxt, &mut sets, pid_tgid, &path)
+                parse_sys_inotify_add_watch(&mut ctxt, &mut sets, pid_tgid, path)
             }
             libc::SYS_openat | libc::SYS_openat2 => {
-                parse_openat(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, &path)
+                parse_openat(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, path)
             }
             // #[cfg(target_arch = "x86_64")]
             // libc::SYS_open => {
@@ -656,14 +630,14 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             //         &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
             //     )
             // }
-            libc::SYS_chdir => parse_chdir(&mut ctxt, &mut sets, pid_tgid, ret, &path),
+            libc::SYS_chdir => parse_chdir(&mut ctxt, &mut sets, pid_tgid, ret, path),
             libc::SYS_symlinkat => parse_symlinkat(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
+                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, path,
             ),
             // libc::SYS_symlink => {}
             // r path
             libc::SYS_execve | libc::SYS_statfs | libc::SYS_getxattr | libc::SYS_lgetxattr => {
-                parse_r_first_path_e1(&mut ctxt, &mut sets, pid_tgid, &path)
+                parse_r_first_path_e1(&mut ctxt, &mut sets, pid_tgid, path)
             }
             // libc::SYS_stat => {}
             // libc::SYS_lstat => {}
@@ -671,7 +645,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             // libc::SYS_readlink => {}
             // w path
             libc::SYS_truncate | libc::SYS_acct => {
-                parse_w_first_path_e1(&mut ctxt, &mut sets, pid_tgid, ret, &path)
+                parse_w_first_path_e1(&mut ctxt, &mut sets, pid_tgid, ret, path)
             }
             // libc::SYS_mkdir => {}
             // libc::SYS_rmdir => {}
@@ -690,7 +664,7 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             | libc::SYS_readlinkat
             | libc::SYS_faccessat
             | libc::SYS_faccessat2
-            | libc::SYS_execveat => parse_r_fd_path_e1(&mut ctxt, &mut sets, pid_tgid, fd, &path),
+            | libc::SYS_execveat => parse_r_fd_path_e1(&mut ctxt, &mut sets, pid_tgid, fd, path),
             // w fd path
             libc::SYS_linkat
             | libc::SYS_unlinkat
@@ -699,11 +673,11 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             | libc::SYS_mknodat
             | libc::SYS_fchownat
             | libc::SYS_fchmodat => parse_w_fd_path_e1(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
+                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, path,
             ),
             // libc::SYS_futimeat => {}
             libc::SYS_memfd_create => {
-                parse_memfd_create(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, &path)
+                parse_memfd_create(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, path)
             }
 
             // libc::SYS_close => parse_close(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, &path),
@@ -723,9 +697,9 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             // libc::SYS_link => {}
             // libc::SYS_rename => {}
             libc::SYS_renameat | libc::SYS_renameat2 => parse_renameat(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path, fd2, &path2,
+                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, path, fd2, path2,
             ),
-            libc::SYS_pipe2 => parse_pipe2(&mut ctxt, &mut sets, pid_tgid, flags, fd, &path, fd2),
+            libc::SYS_pipe2 => parse_pipe2(&mut ctxt, &mut sets, pid_tgid, flags, fd, path, fd2),
             _ => {}
         },
         SyscallInfo::EventFcntl {
@@ -799,7 +773,7 @@ fn parse_memfd_create(
     pid_tgid: u64,
     ret: i64,
     flags: u32,
-    fd: i32,
+    _fd: i32,
     path: &str,
 ) {
     if ret < 0 {
@@ -940,19 +914,19 @@ fn parse_openat(
     }
 }
 
-fn parse_close(
-    ctxt: &mut Context,
-    sets: &mut RWSet,
-    pid_tgid: u64,
-    ret: i64,
-    flags: u32,
-    fd: i32,
-    path: &str,
-) {
-    if ret >= 0 {
-        // ctxt.close_file(pid_tgid, fd);
-    }
-}
+// fn parse_close(
+//     ctxt: &mut Context,
+//     sets: &mut RWSet,
+//     pid_tgid: u64,
+//     ret: i64,
+//     flags: u32,
+//     fd: i32,
+//     path: &str,
+// ) {
+//     // if ret >= 0 {
+//     //     ctxt.close_file(pid_tgid, fd);
+//     // }
+// }
 
 fn parse_open(
     ctxt: &mut Context,
@@ -1130,87 +1104,83 @@ fn insert_with_ancestors(sets: &mut RWSet, p: PathBuf, kind: AccessKind) {
 pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<()> {
     loop {
         match rx.recv() {
-            Ok(Some(f @ SyscallEvent::Enter0(e))) => {
-                // print!("{f}");
-                let pid_tgid = e.pid_tgid as u64;
+            Ok(Some(enter @ SyscallEvent::Enter { pid_tgid, .. })) => {
                 let mut logs = LOGS.lock().unwrap();
-                logs.update_log(pid_tgid, SyscallEvent::Enter0(e))
+                logs.update_log(pid_tgid, enter)
             }
-            Ok(Some(f @ SyscallEvent::Enter1(e))) => {
-                // print!("{f}");
-                let pid_tgid = e.pid_tgid as u64;
+            Ok(Some(exit @ SyscallEvent::Exit { pid_tgid, ret })) => {
                 let mut logs = LOGS.lock().unwrap();
-                logs.update_log(pid_tgid, SyscallEvent::Enter1(e))
-            }
-            Ok(Some(f @ SyscallEvent::Enter2(e))) => {
-                // print!("{f}");
-                let pid_tgid = e.pid_tgid as u64;
-                let mut logs = LOGS.lock().unwrap();
-                logs.update_log(pid_tgid, SyscallEvent::Enter2(e))
-            }
-            Ok(Some(f @ SyscallEvent::EnterFcntl(e))) => {
-                // print!("{f}");
-                let pid_tgid = e.pid_tgid as u64;
-                let mut logs = LOGS.lock().unwrap();
-                logs.update_log(pid_tgid, SyscallEvent::EnterFcntl(e))
-            }
-            Ok(Some(f @ SyscallEvent::Exit(exit_info))) => {
-                // print!("{f}");
-                let pid_tgid = exit_info.pid_tgid as u64;
-                let mut logs = LOGS.lock().unwrap();
-                logs.update_log(pid_tgid, SyscallEvent::Exit(exit_info));
+                logs.update_log(pid_tgid, exit);
                 let event_queue = logs.log.get(&pid_tgid).unwrap();
                 let len = event_queue.len();
                 if len >= 2 {
-                    let enter_event = &event_queue[len - 2];
-                    match enter_event {
-                        SyscallEvent::Enter0(e) => {
+                    if let SyscallEvent::Enter {
+                        pid_tgid,
+                        syscall_nr,
+                        event_type,
+                        flags,
+                        cmd,
+                        arg,
+                        fd,
+                        fd2,
+                        path1,
+                        path2,
+                    } = &event_queue[len - 2]
+                    {
+                        if *event_type == sys_enter_event_type_t_ENTER_PATH0 {
                             on_event_update_rw_sets(SyscallInfo::Event0 {
-                                pid_tgid: e.pid_tgid as u64,
-                                ret: exit_info.ret,
-                                syscall_nr: e.syscall_nr,
-                                flags: e.flags as u32,
+                                pid_tgid: *pid_tgid,
+                                ret,
+                                syscall_nr: *syscall_nr,
+                                flags: *flags,
                             });
                         }
-                        SyscallEvent::Enter1(e) => {
-                            let path_cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
-
+                        if *event_type == sys_enter_event_type_t_ENTER_PATH1 {
                             on_event_update_rw_sets(SyscallInfo::Event1 {
-                                pid_tgid: e.pid_tgid as u64,
-                                ret: exit_info.ret,
-                                syscall_nr: e.syscall_nr,
-                                flags: e.flags as u32,
-                                fd: e.fd,
-                                path: String::from_utf8_lossy(path_cstr.to_bytes()).to_string(),
+                                pid_tgid: *pid_tgid,
+                                ret,
+                                syscall_nr: *syscall_nr,
+                                flags: *flags,
+                                fd: *fd,
+                                path: &*path1,
                             });
                         }
-                        SyscallEvent::Enter2(e) => {
-                            let path_cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
-                            let path2_cstr = unsafe { CStr::from_ptr(e.path2.as_ptr()) };
-
+                        if *event_type == sys_enter_event_type_t_ENTER_PATH2 {
                             on_event_update_rw_sets(SyscallInfo::Event2 {
-                                pid_tgid: e.pid_tgid as u64,
-                                ret: exit_info.ret,
-                                syscall_nr: e.syscall_nr,
-                                flags: e.flags as u32,
-                                fd: e.fd,
-                                path: String::from_utf8_lossy(path_cstr.to_bytes()).to_string(),
-                                fd2: e.fd2,
-                                path2: String::from_utf8_lossy(path2_cstr.to_bytes()).to_string(),
+                                pid_tgid: *pid_tgid,
+                                ret,
+                                syscall_nr: *syscall_nr,
+                                flags: *flags,
+                                fd: *fd,
+                                path: &*path1,
+                                fd2: *fd2,
+                                path2: &*path2,
                             });
                         }
-                        SyscallEvent::EnterFcntl(e) => {
+                        if *event_type == sys_enter_event_type_t_ENTER_FCNTL {
                             on_event_update_rw_sets(SyscallInfo::EventFcntl {
-                                pid_tgid: e.pid_tgid as u64,
-                                ret: exit_info.ret,
-                                syscall_nr: e.syscall_nr,
-                                fd: e.fd,
-                                cmd: e.cmd,
-                                arg: e.arg,
-                            })
+                                pid_tgid: *pid_tgid,
+                                ret,
+                                syscall_nr: *syscall_nr,
+                                fd: *fd,
+                                cmd: *cmd,
+                                arg: *arg,
+                            });
                         }
-                        _ => {}
-                    };
+                    }
+
+                    // SyscallEvent::Enter1(e) => {
+                    //     let path_cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
+                    //
+                    //     on_event_update_rw_sets(SyscallInfo::Event1 {
+                    //         pid_tgid: e.pid_tgid as u64,
+                    //         ret: exit_info.ret,
+                    //         syscall_nr: e.syscall_nr,
+                    //         flags: e.flags as u32,
+                    //         fd: e.fd,
+                    //         path: String::from_utf8_lossy(path_cstr.to_bytes()).to_string(),
+                    //     });
+                    // }
                 }
             }
             Ok(None) => break,
