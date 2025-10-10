@@ -16,15 +16,15 @@ use std::os::raw::c_char;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
-use std::{env, ptr};
+use std::{env, ptr, fs};
 use std::sync::mpsc;
 use std::thread;
+use std::path::Path;
 use std::time::Duration;
 // use clap::Parser;
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
 use nix::unistd::{setgroups, setresgid, setresuid, Gid, Uid, getuid};
-use syscallnrs::{syscall_of_nr};
 // use plain::Plain;
 // use time::OffsetDateTime;
 // use time::macros::format_description;
@@ -274,5 +274,20 @@ fn main() -> Result<()> {
 
     sets.dump_sets();
     // ctxt.check_empty();
+    let potentialAddedDirs = ["git", "temp"];
+
+    if cfg!(debug_assertions) {
+        for dir in potentialAddedDirs {
+        let path = Path::new(dir);
+        if path.is_dir() {
+            println!("Removing directory: {}", dir);
+            if let Err(e) = fs::remove_dir_all(path) {
+                eprintln!("Failed to remove {}: {}", dir, e);
+            }
+        } else {
+            println!("No such directory: {}", dir);
+        }
+        }
+    } 
     Ok(())
 }

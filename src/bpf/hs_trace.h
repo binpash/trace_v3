@@ -1,6 +1,10 @@
 #ifndef _HS_TRACE_H_
 #define _HS_TRACE_H_
 
+#ifndef HS_MAX_PATH
+#define HS_MAX_PATH 4096 
+#endif
+
 struct unique_file_t {
 	int dev;
 	int ino;
@@ -25,7 +29,7 @@ struct sys_enter_info1_t {
 	long int syscall_nr;
 	int flags; // for special handling: open*, clone, linkat, etc.
 	int fd;    // for -at syscalls: could be AT_FDCWD
-	char path[4096];
+	char path[HS_MAX_PATH];
 };
 
 struct sys_enter_info2_t {
@@ -34,8 +38,8 @@ struct sys_enter_info2_t {
 	int flags; // for special handling: open*, clone, linkat, etc.
 	int fd;    // for -at syscalls: could be AT_FDCWD
 	int fd2;   // for renameat2 and linkat
-	char path[4096];
-	char path2[4096];
+	char path[HS_MAX_PATH];
+	char path2[HS_MAX_PATH];
 };
 
 struct sys_exit_info_t {

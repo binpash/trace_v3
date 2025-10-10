@@ -7,8 +7,6 @@ use std::process::{Command, Stdio};
 use libbpf_cargo::SkeletonBuilder;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let args: Vec<String> = std::env::args().collect();
-
     
     println!("cargo::rerun-if-changed=src/bpf/vmlinux.h");
     let file = File::create("src/bpf/vmlinux.h").unwrap();
@@ -39,6 +37,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             arch
         }
     );
+
     let include_flag = format!("-I/usr/include/{}-linux-gnu", arch);
     SkeletonBuilder::new()
         .source("src/bpf/hs_trace.bpf.c")
