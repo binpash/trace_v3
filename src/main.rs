@@ -16,13 +16,15 @@ use std::os::raw::c_char;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
-use std::ptr;
+use std::{env, ptr};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 // use clap::Parser;
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
+use nix::unistd::{setgroups, setresgid, setresuid, Gid, Uid, getuid};
+
 // use plain::Plain;
 // use time::OffsetDateTime;
 // use time::macros::format_description;
@@ -49,7 +51,20 @@ static RUNNING: AtomicBool = AtomicBool::new(true);
 extern "C" fn sigchld_handler(_sig: i32) {
     RUNNING.store(false, Ordering::Relaxed);
 }
+fn find_sudo_invoker() -> Option<(u32, u32)> {
+    let sudo = env::var("SUDO_UID").ok()?;
+    let prev_uid: u32 = match sudo.trim().parse() {
+        Ok(num) => num,
+        Err(_) => 0
+    };
 
+    let group = env::var("SUDO_GID").ok()?;
+    let prev_grp: u32 = match group.trim().parse() {
+        Ok(num) => num,
+        Err(_) => 0
+    };
+    Some((prev_uid, prev_grp))
+}
 fn main() -> Result<()> {
     let mut args = std::env::args();
 
@@ -101,6 +116,20 @@ fn main() -> Result<()> {
             let mut argv: Vec<*const c_char> = cstr_args.iter().map(|s| s.as_ptr()).collect();
             argv.push(std::ptr::null());
             let prog = &cstr_args[0];
+
+            match find_sudo_invoker() {
+                Some((uid,gid) ) => {
+                    let target_uid = Uid::from_raw(uid);
+                    let target_gid = Gid::from_raw(gid);
+                    println!("{uid}, {gid}");
+                    setgroups(&[]).expect("setgroups");
+                    
+                    setresgid(target_gid, target_gid, target_gid).expect("setresgid");
+                    setresuid(target_uid, target_uid, target_uid).expect("setresuid"); 
+                }
+                None => {}
+            }
+
             libc::execvp(prog.as_ptr(), argv.as_ptr());
         }
     }

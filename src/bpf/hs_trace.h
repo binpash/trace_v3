@@ -25,7 +25,7 @@ struct sys_enter_info1_t {
 	long int syscall_nr;
 	int flags; // for special handling: open*, clone, linkat, etc.
 	int fd;    // for -at syscalls: could be AT_FDCWD
-	char path[1024];
+	char path[4096];
 };
 
 struct sys_enter_info2_t {
@@ -34,8 +34,8 @@ struct sys_enter_info2_t {
 	int flags; // for special handling: open*, clone, linkat, etc.
 	int fd;    // for -at syscalls: could be AT_FDCWD
 	int fd2;   // for renameat2 and linkat
-	char path[1024];
-	char path2[1024];
+	char path[4096];
+	char path2[4096];
 };
 
 struct sys_exit_info_t {
