@@ -24,7 +24,7 @@ use std::time::Duration;
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
 use nix::unistd::{setgroups, setresgid, setresuid, Gid, Uid, getuid};
-
+use syscallnrs::{syscall_of_nr};
 // use plain::Plain;
 // use time::OffsetDateTime;
 // use time::macros::format_description;

@@ -8,6 +8,8 @@ use libbpf_cargo::SkeletonBuilder;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
+
+    
     println!("cargo::rerun-if-changed=src/bpf/vmlinux.h");
     let file = File::create("src/bpf/vmlinux.h").unwrap();
     Command::new("bpftool")

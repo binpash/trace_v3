@@ -1,5 +1,6 @@
 use anyhow::Result;
 use libc::{self, dirfd};
+use nix::sys;
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::CStr;
@@ -7,6 +8,7 @@ use std::path::{Component, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Mutex, RwLock};
 use trace_v3::*;
+use syscallnrs::{syscall_of_nr};
 
 #[cfg(target_arch = "x86_64")]
 pub fn individually_handled_syscall_map() -> HashMap<i64, &'static str> {
@@ -201,13 +203,22 @@ impl Logs {
             for e in log.iter() {
                 match e {
                     SyscallEvent::Enter0(e) => {
-                        print!("{}(flags={})", e.syscall_nr, e.flags);
+                        print!("{}(flags={})", 
+                            match syscall_of_nr(e.syscall_nr as u64) {
+                                Some(syscall) => syscall,
+                                None => "Syscall not found"
+                            },
+                            e.flags
+                        );
                     }
                     SyscallEvent::Enter1(e) => {
                         let cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
                         print!(
                             "{}(fd={},path={},flags={})",
-                            e.syscall_nr,
+                            match syscall_of_nr(e.syscall_nr as u64) {
+                                Some(syscall) => syscall,
+                                None => "Syscall not found"
+                            },
                             e.fd,
                             cstr.to_string_lossy(),
                             e.flags
@@ -218,7 +229,10 @@ impl Logs {
                         let cstr2 = unsafe { CStr::from_ptr(e.path2.as_ptr()) };
                         print!(
                             "{}(fd={},path={},fd2={},path2={},flags={})",
-                            e.syscall_nr,
+                            match syscall_of_nr(e.syscall_nr as u64) {
+                                Some(syscall) => syscall,
+                                None => "Syscall not found"
+                            },
                             e.fd,
                             cstr.to_string_lossy(),
                             e.fd2,
@@ -227,7 +241,15 @@ impl Logs {
                         );
                     }
                     SyscallEvent::EnterFcntl(e) => {
-                        print!("{}(fd={},cmd={},arg={})", e.syscall_nr, e.fd, e.cmd, e.arg);
+                        print!("{}(fd={},cmd={},arg={})", 
+                            match syscall_of_nr(e.syscall_nr as u64) {
+                                Some(syscall) => syscall,
+                                None => "Syscall not found"
+                            }, 
+                            e.fd,
+                            e.cmd, 
+                            e.arg
+                        );
                     }
                     SyscallEvent::Exit(e) => {
                         println!(" -> {}", e.ret);
