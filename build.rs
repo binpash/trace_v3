@@ -7,7 +7,9 @@ use std::process::{Command, Stdio};
 use libbpf_cargo::SkeletonBuilder;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    
+    println!("cargo::rerun-if-env-changed=HS_MAX_PATH");
+    let size = env::var("HS_MAX_PATH").unwrap_or_else(|_| "4096".into());
+
     println!("cargo::rerun-if-changed=src/bpf/vmlinux.h");
     let file = File::create("src/bpf/vmlinux.h").unwrap();
     Command::new("bpftool")
@@ -49,6 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             &target_arch_flag,
             "-Wall",
             &include_flag,
+            &format!("-DHS_MAX_PATH={size}"),
         ])
         .build_and_generate("src/bpf/hs_trace.skel.rs")?;
 
@@ -62,6 +65,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         // Finish the builder and generate the bindings.
+        .clang_arg(format!("-DHS_MAX_PATH={size}"))
         .generate()?
         .write_to_file(outdir.join("bindings.rs"))?;
 

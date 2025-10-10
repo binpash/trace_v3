@@ -121,7 +121,6 @@ fn main() -> Result<()> {
                 Some((uid,gid) ) => {
                     let target_uid = Uid::from_raw(uid);
                     let target_gid = Gid::from_raw(gid);
-                    println!("{uid}, {gid}");
                     setgroups(&[]).expect("setgroups");
                     
                     setresgid(target_gid, target_gid, target_gid).expect("setresgid");
@@ -274,10 +273,10 @@ fn main() -> Result<()> {
 
     sets.dump_sets();
     // ctxt.check_empty();
-    let potentialAddedDirs = ["git", "temp"];
+    let potential_added_dirs = ["git", "temp"];
 
     if cfg!(debug_assertions) {
-        for dir in potentialAddedDirs {
+        for dir in potential_added_dirs {
         let path = Path::new(dir);
         if path.is_dir() {
             println!("Removing directory: {}", dir);
