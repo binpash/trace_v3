@@ -586,9 +586,9 @@ dependencies = [
 
 [[package]]
 name = "syscallnrs"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b83c6cfcd83819c3a9db194b1ac589bb98867512b12f5e4ccfabc9281dbfc974"
+checksum = "82c953e979e347075518fc623cce7fedef4612dfb41248d7d713d46338d8099f"
 
 [[package]]
 name = "tempfile"
