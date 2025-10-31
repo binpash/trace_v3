@@ -10,7 +10,7 @@
 
 struct {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
-	__uint(max_entries, 1024 * 1024*4);
+	__uint(max_entries, 1024 * 1024* BUFF_SIZE);
 } output SEC(".maps");
 
 struct {
@@ -227,8 +227,6 @@ BPF_PROG(hs_trace_create_pipe_exit)
 	enter2->syscall_nr = ((struct sys_exit_pipe2_args *)ctx)->id;
 	enter2->flags = -1;
 	bpf_map_delete_elem(&pipe_tracker, &pid);
-	
-
 
 	int fds[2];
 	bpf_probe_read_user(&fds, sizeof(fds), (void *)(*fds_pointers));
@@ -295,11 +293,12 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 	u32 dummy_val = 1;
 	u64 p_pid = parent->pid;
 	u64 c_pid = child->pid;
-	u64 p_pid_tgid = (p_pid << 32) | p_pid;
-	u64 c_pid_tgid = (c_pid << 32) | c_pid;
+	u64 p_tgid = parent -> tgid;
+	u64 c_tgid = child -> tgid;
+	u64 p_pid_tgid = (p_tgid << 32) | p_pid;
+	u64 c_pid_tgid = (c_tgid << 32) | c_pid;
 
-	// //bpf_printk("sched_process_fork called with parent %d and child %d\n",
-	//            p_pid, c_pid);
+
 	if (bpf_map_lookup_elem(&pid_set, &p_pid) == NULL) {
 		// //bpf_printk("parent pid %d not in set\n", p_pid);
 		return 0;
@@ -308,25 +307,27 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 		//bpf_printk("failed to update pid set with %d\n", c_pid);
 		return 0;
 	}
+	// bpf_printk("sched_process_fork called with parent %d and child %d\n",
+	//            p_pid, c_pid);
 	//bpf_printk("update pid set with %d\n", c_pid);
 
-	// struct sys_enter_info0_t *enter0;
-	// if ((enter0 = bpf_ringbuf_reserve(
-	// 	 &output, sizeof(struct sys_enter_info0_t), 0)) == NULL) {
-	// 	// //bpf_printk(
-	// 	//     "FAILED to reserve space in ring buffer for event_type ==
-	// 	//     " "SYS_ENTER0\n");
-	// 	u32 key = 0;
-	// 	u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
-	// 	if (missed) {
-	// 		__sync_fetch_and_add(missed, 1);
-	// 	}
-	// 	return 0;
-	// }
-	// enter0->pid_tgid = p_pid_tgid;
-	// enter0->syscall_nr = __NR_clone;
-	// enter0->flags = 0;
-	// bpf_ringbuf_submit(enter0, 0);
+	struct sys_enter_info0_t *enter0;
+	if ((enter0 = bpf_ringbuf_reserve(
+		 &output, sizeof(struct sys_enter_info0_t), 0)) == NULL) {
+		// //bpf_printk(
+		//     "FAILED to reserve space in ring buffer for event_type ==
+		//     " "SYS_ENTER0\n");
+		u32 key = 0;
+		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		if (missed) {
+			__sync_fetch_and_add(missed, 1);
+		}
+		return 0;
+	}
+	enter0->pid_tgid = p_pid_tgid;
+	enter0->syscall_nr = __NR_clone;
+	enter0->flags = 0;
+	bpf_ringbuf_submit(enter0, 0);
 
 	struct sys_exit_info_t *exit;
 	if ((exit = bpf_ringbuf_reserve(&output, sizeof(struct sys_exit_info_t),
@@ -419,12 +420,20 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		event_type = SYS_ENTER1;
 		break;
 #endif
-#ifdef __NR_clone
-	case __NR_clone:
-		flags = (int)PT_REGS_PARM3_CORE(regs);
-		event_type = SYS_ENTER0;
-		break;
-#endif
+// #ifdef __NR_clone3
+// 	case __NR_clone3:
+// 		bpf_printk("CLONE3 CALLLED");
+// 		//flags = (int)PT_REGS_PARM3_CORE(regs);
+// 		event_type = SYS_ENTER0;
+// 		break;
+// #endif
+// #ifdef __NR_clone
+// 	case __NR_clone:
+// 		bpf_printk("CLONE CALLLED");
+// 		flags = (int)PT_REGS_PARM3_CORE(regs);
+// 		event_type = SYS_ENTER0;
+// 		break;
+// #endif
 #ifdef __NR_symlink
 	case __NR_symlink:
 		// NOTE: symlink only incurs a dependency for the symlink file
@@ -627,7 +636,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		return 0;
 	}
 
-	////bpf_printk("sys_enter called on %ld\n", syscall_id);
+	//bpf_printk("sys_enter called on %ld\n", BUFF_SIZE);
 
 	struct sys_enter_info0_t *enter0;
 	struct sys_enter_info1_t *enter1;

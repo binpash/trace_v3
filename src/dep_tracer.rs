@@ -149,12 +149,13 @@ pub fn w_fd_path_syscall_map() -> HashMap<i64, &'static str> {
 #[inline(always)]
 pub fn upid_of(pid_tgid: u64) -> u32 {
     // NOTE: userspace pid = kernel tgid
-    (pid_tgid >> 32) as u32
+    (pid_tgid & 0xFFFFFFFF) as u32
 }
 
 #[inline(always)]
 pub fn utid_of(pid_tgid: u64) -> u32 {
-    (pid_tgid & 0xFFFFFFFF) as u32
+    (pid_tgid >> 32) as u32
+
 }
 
 #[derive(Debug)]
@@ -177,12 +178,16 @@ impl Logs {
     }
     pub fn size(&self) {
         for (pid_tgid, vec) in &self.log{
-            println!("{pid_tgid}");
+            //println!("{pid_tgid}");
             let a = vec.len();
             println!("{a}");
         };
     }
     pub fn update_log(&mut self, pid_tgid: u64, event: SyscallEvent) {
+        // if let SyscallEvent::Enter0(_) = event {
+        //     println!("EVENT");
+        //     println!("{event:#?}");
+        // }
         self.log
             .entry(pid_tgid)
             .or_insert_with(|| VecDeque::new())
@@ -465,10 +470,10 @@ impl Context {
             .fd_tables
             .get_mut(&pid)
             .expect(format!("expected fd table for pid {pid}").as_str());
-        if !fd_table.contains_key(&fd) {
-            println!("{fd}");
-            println!("{fd_table:#?}")
-        }
+        // if !fd_table.contains_key(&fd) {
+        //     println!("{fd}");
+        //     println!("{fd_table:#?}")
+        // }
         self.open_files
             .close_file(fd_table.get(&fd).unwrap().open_file);
         fd_table.remove(&fd);
@@ -731,6 +736,10 @@ fn convert_absolute(ctxt: &Context, pid_tgid: u64, raw_path: &str, dirfd: Option
     } else {
         let base = if let Some(fd) = dirfd {
             if fd == libc::AT_FDCWD {
+                // let a = &ctxt.cwd_map;
+                // let c = upid_of(pid_tgid);
+                // let d = utid_of(pid_tgid);
+                // println!("{a:#?}, {pid_tgid}, {c}, {d}");
                 ctxt.cwd_map
                     .get(&pid_tgid)
                     .expect("pid_tgid not found bc pid_tgid not in cwd")
@@ -979,6 +988,8 @@ fn parse_clone(ctxt: &mut Context, pid_tgid: u64, ret: i64) {
     if ret < 0 {
         return;
     };
+    //println!("HEREERER");
+    //println!("{pid_tgid}, {ret}");
     ctxt.do_clone(pid_tgid, ret as u64)
 }
 

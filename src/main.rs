@@ -239,15 +239,9 @@ fn main() -> Result<()> {
             }
             let diff = total - prev_missed;
             if diff != 0 {
-                println!("{diff} missed events in this poll,{count} before, {total} - {prev_missed}");
-                let logs = LOGS.lock().unwrap();
-                count = 0;
-                logs.size();
-
+                println!("{diff} missed events in this poll, {total} - {prev_missed}");
             }
-            else{
-                count +=1;
-            }
+            
             program_total += diff;
             prev_missed = total;
             

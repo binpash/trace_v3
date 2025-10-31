@@ -11,7 +11,7 @@
 namespace fs = std::filesystem;
 
 void open1000files(int id) {
-    for (int i = 0; i < 1; i++){
+    for (int i = 0; i < 1000; i++){
         
         std::string complete_path = "temp/" + std::to_string(id*10000+ i);
         //cout << complete_path << endl;
