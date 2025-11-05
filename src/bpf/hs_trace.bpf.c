@@ -10,7 +10,7 @@
 
 struct {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
-	__uint(max_entries, 1024 * 1024* BUFF_SIZE);
+	__uint(max_entries, 1024 * 1024 * BUFF_SIZE);
 } output SEC(".maps");
 
 struct {
@@ -62,10 +62,12 @@ struct sys_enter_fcntl_args {
 	unsigned char common_preempt_count;
 	int common_pid;
 
-	int syscall_nr;
-	unsigned int fd;
-	unsigned int cmd;
-	unsigned long arg;
+	// keep track of offset and size of each field
+	// don't just use the types in the format file
+	long int syscall_nr;
+	unsigned long int fd;
+	unsigned long int cmd;
+	unsigned long int arg;
 };
 
 SEC("tracepoint/syscalls/sys_enter_fcntl")
@@ -170,7 +172,8 @@ BPF_PROG(hs_trace_create_pipe)
 
 	u64 ptr = (u64)((struct sys_enter_pipe2_args *)ctx)->fildes;
 	if (bpf_map_update_elem(&pipe_tracker, &pid, &ptr, BPF_ANY) < 0) {
-		//bpf_printk("failed to update pipe_tracker with pid %d\n", pid);
+		// bpf_printk("failed to update pipe_tracker with pid %d\n",
+		// pid);
 		return 0;
 	}
 
@@ -293,8 +296,8 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 	u32 dummy_val = 1;
 	u64 p_pid = parent->pid;
 	u64 c_pid = child->pid;
-	u64 p_tgid = parent -> tgid;
-	u64 c_tgid = child -> tgid;
+	u64 p_tgid = parent->tgid;
+	u64 c_tgid = child->tgid;
 	u64 p_pid_tgid = (p_tgid << 32) | p_pid;
 	u64 c_pid_tgid = (c_tgid << 32) | c_pid;
 
@@ -304,12 +307,12 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 		return 0;
 	}
 	if (bpf_map_update_elem(&pid_set, &c_pid, &dummy_val, BPF_ANY) < 0) {
-		//bpf_printk("failed to update pid set with %d\n", c_pid);
+		// bpf_printk("failed to update pid set with %d\n", c_pid);
 		return 0;
 	}
-	// bpf_printk("sched_process_fork called with parent %d and child %d\n",
-	//            p_pid, c_pid);
-	//bpf_printk("update pid set with %d\n", c_pid);
+	bpf_printk("sched_process_fork called with parent %d and child %d\n",
+	           p_pid, c_pid);
+	// bpf_printk("update pid set with %d\n", c_pid);
 
 	struct sys_enter_info0_t *enter0;
 	if ((enter0 = bpf_ringbuf_reserve(
@@ -356,10 +359,10 @@ BPF_PROG(hs_trace_process_exit, struct task_struct *p)
 {
 	u32 pid = p->pid;
 	if (bpf_map_delete_elem(&pid_set, &pid) < 0) {
-		//bpf_printk("failed to delete %d from pid set\n", pid);
+		// bpf_printk("failed to delete %d from pid set\n", pid);
 		return 0;
 	}
-	//bpf_printk("removed %d from pid set\n", pid);
+	// bpf_printk("removed %d from pid set\n", pid);
 	return 0;
 }
 
@@ -636,7 +639,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		return 0;
 	}
 
-	//bpf_printk("sys_enter called on %ld\n", BUFF_SIZE);
+	bpf_printk("sys_enter called on %ld\n", syscall_id);
 
 	struct sys_enter_info0_t *enter0;
 	struct sys_enter_info1_t *enter1;
@@ -651,7 +654,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 			if (missed) {
 				__sync_fetch_and_add(missed, 1);
 			}
-			//bpf_printk("Syscall failed %ld\n", syscall_id);
+			// bpf_printk("Syscall failed %ld\n", syscall_id);
 			return 0;
 		}
 		enter0->pid_tgid = pid_tgid;
@@ -667,7 +670,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 			if (missed) {
 				__sync_fetch_and_add(missed, 1);
 			}
-			//bpf_printk("Syscall failed %ld\n", syscall_id);
+			// bpf_printk("Syscall failed %ld\n", syscall_id);
 			return 0;
 		}
 		enter1->pid_tgid = pid_tgid;
@@ -686,7 +689,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 			if (missed) {
 				__sync_fetch_and_add(missed, 1);
 			}
-			//bpf_printk("Syscall failed %ld\n", syscall_id);
+			// bpf_printk("Syscall failed %ld\n", syscall_id);
 			return 0;
 		}
 		enter2->pid_tgid = pid_tgid;
@@ -730,9 +733,9 @@ BPF_PROG(hs_trace_sys_exit)
 	switch (syscall_id) {
 #ifdef __NR_clone
 	case __NR_clone:
-	if (((struct sys_exit_args *)ctx)->ret > 0) {
-		return 0;
-	};
+		if (((struct sys_exit_args *)ctx)->ret > 0) {
+			return 0;
+		};
 #endif
 #ifdef __NR_openat
 	case __NR_openat: /* individually */
@@ -908,7 +911,7 @@ BPF_PROG(hs_trace_sys_exit)
 		if (missed) {
 			__sync_fetch_and_add(missed, 1);
 		}
-		//bpf_printk("Syscall failed %ld\n", syscall_id);
+		// bpf_printk("Syscall failed %ld\n", syscall_id);
 
 		return 0;
 	}

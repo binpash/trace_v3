@@ -4,11 +4,13 @@ use nix::sys;
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::CStr;
+use std::fmt;
+use std::fmt::Display;
 use std::path::{Component, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Mutex, RwLock};
+use syscallnrs::syscall_of_nr;
 use trace_v3::*;
-use syscallnrs::{syscall_of_nr};
 
 #[cfg(target_arch = "x86_64")]
 pub fn individually_handled_syscall_map() -> HashMap<i64, &'static str> {
@@ -155,7 +157,6 @@ pub fn upid_of(pid_tgid: u64) -> u32 {
 #[inline(always)]
 pub fn utid_of(pid_tgid: u64) -> u32 {
     (pid_tgid >> 32) as u32
-
 }
 
 #[derive(Debug)]
@@ -166,6 +167,71 @@ pub enum SyscallEvent {
     EnterFcntl(sys_enter_fcntl_info_t),
     Exit(sys_exit_info_t),
 }
+impl Display for SyscallEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SyscallEvent::Enter0(e) => {
+                write!(
+                    f,
+                    "{}(flags={})",
+                    match syscall_of_nr(e.syscall_nr as u64) {
+                        Some(syscall) => syscall,
+                        None => "Syscall not found",
+                    },
+                    e.flags
+                )
+            }
+            SyscallEvent::Enter1(e) => {
+                let cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
+                write!(
+                    f,
+                    "{}(fd={},path={},flags={})",
+                    match syscall_of_nr(e.syscall_nr as u64) {
+                        Some(syscall) => syscall,
+                        None => "Syscall not found",
+                    },
+                    e.fd,
+                    cstr.to_string_lossy(),
+                    e.flags
+                )
+            }
+            SyscallEvent::Enter2(e) => {
+                let cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
+                let cstr2 = unsafe { CStr::from_ptr(e.path2.as_ptr()) };
+                write!(
+                    f,
+                    "{}(fd={},path={},fd2={},path2={},flags={})",
+                    match syscall_of_nr(e.syscall_nr as u64) {
+                        Some(syscall) => syscall,
+                        None => "Syscall not found",
+                    },
+                    e.fd,
+                    cstr.to_string_lossy(),
+                    e.fd2,
+                    cstr2.to_string_lossy(),
+                    e.flags
+                )
+            }
+            SyscallEvent::EnterFcntl(e) => {
+                write!(
+                    f,
+                    "{}(fd={},cmd={},arg={})",
+                    match syscall_of_nr(e.syscall_nr as u64) {
+                        Some(syscall) => syscall,
+                        None => "Syscall not found",
+                    },
+                    e.fd,
+                    e.cmd,
+                    e.arg
+                )
+            }
+            SyscallEvent::Exit(e) => {
+                writeln!(f, " -> {}", e.ret)
+            }
+        }
+    }
+}
+
 pub struct Logs {
     log: HashMap<u64, VecDeque<SyscallEvent>>,
 }
@@ -177,11 +243,11 @@ impl Logs {
         }
     }
     pub fn size(&self) {
-        for (pid_tgid, vec) in &self.log{
+        for (pid_tgid, vec) in &self.log {
             //println!("{pid_tgid}");
             let a = vec.len();
             println!("{a}");
-        };
+        }
     }
     pub fn update_log(&mut self, pid_tgid: u64, event: SyscallEvent) {
         // if let SyscallEvent::Enter0(_) = event {
@@ -206,60 +272,7 @@ impl Logs {
         for (pid, tid, log) in sorted_logs {
             println!("log for pid {} tid {}:", pid, tid);
             for e in log.iter() {
-                match e {
-                    SyscallEvent::Enter0(e) => {
-                        print!("{}(flags={})", 
-                            match syscall_of_nr(e.syscall_nr as u64) {
-                                Some(syscall) => syscall,
-                                None => "Syscall not found"
-                            },
-                            e.flags
-                        );
-                    }
-                    SyscallEvent::Enter1(e) => {
-                        let cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
-                        print!(
-                            "{}(fd={},path={},flags={})",
-                            match syscall_of_nr(e.syscall_nr as u64) {
-                                Some(syscall) => syscall,
-                                None => "Syscall not found"
-                            },
-                            e.fd,
-                            cstr.to_string_lossy(),
-                            e.flags
-                        );
-                    }
-                    SyscallEvent::Enter2(e) => {
-                        let cstr = unsafe { CStr::from_ptr(e.path.as_ptr()) };
-                        let cstr2 = unsafe { CStr::from_ptr(e.path2.as_ptr()) };
-                        print!(
-                            "{}(fd={},path={},fd2={},path2={},flags={})",
-                            match syscall_of_nr(e.syscall_nr as u64) {
-                                Some(syscall) => syscall,
-                                None => "Syscall not found"
-                            },
-                            e.fd,
-                            cstr.to_string_lossy(),
-                            e.fd2,
-                            cstr2.to_string_lossy(),
-                            e.flags
-                        );
-                    }
-                    SyscallEvent::EnterFcntl(e) => {
-                        print!("{}(fd={},cmd={},arg={})", 
-                            match syscall_of_nr(e.syscall_nr as u64) {
-                                Some(syscall) => syscall,
-                                None => "Syscall not found"
-                            }, 
-                            e.fd,
-                            e.cmd, 
-                            e.arg
-                        );
-                    }
-                    SyscallEvent::Exit(e) => {
-                        println!(" -> {}", e.ret);
-                    }
-                };
+                print!("{e}");
             }
         }
     }
@@ -464,20 +477,20 @@ impl Context {
         );
     }
 
-    pub fn close_file(&mut self, pid_tgid: u64, fd: i32) {
-        let pid = upid_of(pid_tgid);
-        let fd_table = self
-            .fd_tables
-            .get_mut(&pid)
-            .expect(format!("expected fd table for pid {pid}").as_str());
-        // if !fd_table.contains_key(&fd) {
-        //     println!("{fd}");
-        //     println!("{fd_table:#?}")
-        // }
-        self.open_files
-            .close_file(fd_table.get(&fd).unwrap().open_file);
-        fd_table.remove(&fd);
-    }
+    // pub fn close_file(&mut self, pid_tgid: u64, fd: i32) {
+    //     let pid = upid_of(pid_tgid);
+    //     let fd_table = self
+    //         .fd_tables
+    //         .get_mut(&pid)
+    //         .expect(format!("expected fd table for pid {pid}").as_str());
+    //     // if !fd_table.contains_key(&fd) {
+    //     //     println!("{fd}");
+    //     //     println!("{fd_table:#?}")
+    //     // }
+    //     self.open_files
+    //         .close_file(fd_table.get(&fd).unwrap().open_file);
+    //     fd_table.remove(&fd);
+    // }
 
     pub fn get_fd_flags(&mut self, pid_tgid: u64, fd: i32) -> u32 {
         let pid = upid_of(pid_tgid);
@@ -511,7 +524,7 @@ impl Context {
             .expect(format!("expected fd table for pid {pid}").as_str());
         let file_desc = fd_table
             .get(&fd)
-            .expect(format!("expected fd for pid {pid}").as_str());
+            .expect(format!("expected fd {fd} for pid {pid}").as_str());
         let open_file = self
             .open_files
             .get_path(file_desc.open_file)
@@ -937,7 +950,7 @@ fn parse_close(
     path: &str,
 ) {
     if ret >= 0 {
-        ctxt.close_file(pid_tgid, fd);
+        // ctxt.close_file(pid_tgid, fd);
     }
 }
 
@@ -1117,27 +1130,32 @@ fn insert_with_ancestors(sets: &mut RWSet, p: PathBuf, kind: AccessKind) {
 pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<()> {
     loop {
         match rx.recv() {
-            Ok(Some(SyscallEvent::Enter0(e))) => {
+            Ok(Some(f @ SyscallEvent::Enter0(e))) => {
+                // print!("{f}");
                 let pid_tgid = e.pid_tgid as u64;
                 let mut logs = LOGS.lock().unwrap();
                 logs.update_log(pid_tgid, SyscallEvent::Enter0(e))
             }
-            Ok(Some(SyscallEvent::Enter1(e))) => {
+            Ok(Some(f @ SyscallEvent::Enter1(e))) => {
+                // print!("{f}");
                 let pid_tgid = e.pid_tgid as u64;
                 let mut logs = LOGS.lock().unwrap();
                 logs.update_log(pid_tgid, SyscallEvent::Enter1(e))
             }
-            Ok(Some(SyscallEvent::Enter2(e))) => {
+            Ok(Some(f @ SyscallEvent::Enter2(e))) => {
+                // print!("{f}");
                 let pid_tgid = e.pid_tgid as u64;
                 let mut logs = LOGS.lock().unwrap();
                 logs.update_log(pid_tgid, SyscallEvent::Enter2(e))
             }
-            Ok(Some(SyscallEvent::EnterFcntl(e))) => {
+            Ok(Some(f @ SyscallEvent::EnterFcntl(e))) => {
+                // print!("{f}");
                 let pid_tgid = e.pid_tgid as u64;
                 let mut logs = LOGS.lock().unwrap();
                 logs.update_log(pid_tgid, SyscallEvent::EnterFcntl(e))
             }
-            Ok(Some(SyscallEvent::Exit(exit_info))) => {
+            Ok(Some(f @ SyscallEvent::Exit(exit_info))) => {
+                // print!("{f}");
                 let pid_tgid = exit_info.pid_tgid as u64;
                 let mut logs = LOGS.lock().unwrap();
                 logs.update_log(pid_tgid, SyscallEvent::Exit(exit_info));
