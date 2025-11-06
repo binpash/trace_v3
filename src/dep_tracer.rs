@@ -166,7 +166,7 @@ pub enum SyscallEvent {
         syscall_nr: i64,
         event_type: u32,
         flags: u32,
-        cmd: u32,
+        cmd: u64,
         arg: u64,
         fd: i32,
         fd2: i32,
@@ -589,7 +589,7 @@ enum SyscallInfo<'a> {
         ret: i64,
         syscall_nr: i64,
         fd: i32,
-        cmd: u32,
+        cmd: u64,
         arg: u64,
     },
 }
@@ -804,7 +804,7 @@ enum AccessKind {
     Write,
 }
 
-fn parse_fcntl(ctxt: &mut Context, pid_tgid: u64, ret: i64, fd: i32, cmd: u32, arg: u64) {
+fn parse_fcntl(ctxt: &mut Context, pid_tgid: u64, ret: i64, fd: i32, cmd: u64, arg: u64) {
     match cmd as i32 {
         libc::F_DUPFD => parse_dup(ctxt, pid_tgid, ret, fd),
         libc::F_DUPFD_CLOEXEC => ctxt.dup_file(pid_tgid, fd, ret as i32, libc::FD_CLOEXEC as u32),

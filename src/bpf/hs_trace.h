@@ -26,7 +26,7 @@ struct sys_enter_info_t {
 	long syscall_nr;
 	enum sys_enter_event_type_t event_type;
 	unsigned int flags; // for special handling: open*, clone, linkat, etc.
-	unsigned int cmd;
+	unsigned long cmd;
 	unsigned long arg;
 	int fd;                 // for -at syscalls: could be AT_FDCWD
 	int fd2;                // for renameat2 and linkat
