@@ -193,7 +193,7 @@ fn main() -> Result<()> {
     // setup ringbuf
     let mut rb_builder = RingBufferBuilder::new();
     rb_builder.add(&skel.maps.output, |data| {
-        println!("received {} bytes", data.len());
+        // println!("received {} bytes", data.len());
         let event = if data.len() == size_of::<sys_exit_info_t>() {
             let header = unsafe { &*data.as_ptr().cast::<sys_exit_info_t>() };
             SyscallEvent::Exit {
@@ -220,7 +220,7 @@ fn main() -> Result<()> {
                 .to_string();
 
             SyscallEvent::Enter {
-                pid_tgid,
+                pid_tgid: header.pid_tgid,
                 syscall_nr: header.syscall_nr,
                 event_type: header.event_type,
                 flags: header.flags,

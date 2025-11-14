@@ -23,7 +23,7 @@ struct {
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__type(key, u32);
-	__type(value, char[PATH_MAX]);
+	__type(value, char[HS_MAX_PATH]);
 	__uint(max_entries, 2);
 } paths SEC(".maps");
 
@@ -145,12 +145,12 @@ BPF_PROG(hs_trace_enter_memfd_create)
 		return 0;
 	}
 	int len1 =
-	    BPF_SNPRINTF(path1, PATH_MAX, "memfd:%s",
+	    BPF_SNPRINTF(path1, HS_MAX_PATH, "memfd:%s",
 	                 ((struct sys_enter_memfd_create_args *)ctx)->uname);
 	if (len1 < 0) {
 		return 0;
 	}
-	len1 &= (PATH_MAX - 1);
+	len1 &= (HS_MAX_PATH - 1);
 
 	struct sys_enter_info_t enter1;
 	struct bpf_dynptr ptr;
@@ -281,11 +281,11 @@ BPF_PROG(hs_trace_create_pipe_exit)
 		// SHOULDN'T HAPPEN
 		return 0;
 	}
-	int len1 = BPF_SNPRINTF(path1, PATH_MAX, "pipe:[%d]", ino);
+	int len1 = BPF_SNPRINTF(path1, HS_MAX_PATH, "pipe:[%d]", ino);
 	if (len1 < 0) {
 		return 0;
 	}
-	len1 &= (PATH_MAX - 1);
+	len1 &= (HS_MAX_PATH - 1);
 
 	struct sys_enter_info_t enter2;
 	struct bpf_dynptr ptr;
@@ -411,6 +411,8 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 	enter0.path1_len = 0;
 	enter0.path2_len = 0;
 
+	bpf_dynptr_write(&ptr, 0, &enter0, sizeof(struct sys_enter_info_t), 0);
+
 	bpf_ringbuf_submit_dynptr(&ptr, 0);
 
 	struct sys_exit_info_t exit;
@@ -431,6 +433,8 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 
 	exit.pid_tgid = p_pid_tgid;
 	exit.ret = c_pid_tgid;
+
+	bpf_dynptr_write(&ptr, 0, &exit, sizeof(struct sys_exit_info_t), 0);
 
 	bpf_ringbuf_submit_dynptr(&ptr, 0);
 	return 0;
@@ -736,30 +740,36 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		return 0;
 	}
 	long len1 = 0;
-	if (pathptr1 == NULL ||
-	    (len1 = bpf_probe_read_user_str(path1, PATH_MAX, pathptr1)) < 0) {
-		return 0;
+	if (pathptr1 != NULL) {
+		len1 = bpf_probe_read_user_str(path1, HS_MAX_PATH, pathptr1);
+		if (len1 < 0) {
+			bpf_printk("failed to read user str path1, %d, "
+			           "pathptr1 = %p\n",
+			           len1, pathptr1);
+			return 0;
+		}
 	}
-	len1 &= (PATH_MAX - 1);
+	len1 &= (HS_MAX_PATH - 1);
 	char *path2;
 	if ((path2 = bpf_map_lookup_elem(&paths, &key1)) == NULL) {
 		// SHOULDN'T HAPPEN
 		return 0;
 	}
 	long len2 = 0;
-	if (pathptr2 == NULL ||
-	    (len2 = bpf_probe_read_user_str(path2, PATH_MAX, pathptr2)) < 0) {
-		return 0;
+	if (pathptr2 != NULL) {
+		len2 = bpf_probe_read_user_str(path2, HS_MAX_PATH, pathptr2);
+		if (len2 < 0) {
+			bpf_printk("failed to read user str path2, %d\n", len2);
+			return 0;
+		}
 	}
-	len2 &= (PATH_MAX - 1);
+	len2 &= (HS_MAX_PATH - 1);
 
 	if (bpf_ringbuf_reserve_dynptr(
 		&output, sizeof(struct sys_enter_info_t) + len1 + len2, 0,
 		&ptr) < 0) {
-		// //bpf_printk("FAILED to reserve space in ring buffer
-		// for "
-		//            "event_type == "
-		//            "ENTER_PATH2\n");
+		// bpf_printk("FAILED to reserve space in ring buffer for all "
+		//            "other syscalls\n");
 		u32 key = 0;
 		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
 		if (missed) {
@@ -782,11 +792,14 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	enter.path2_len = len2;
 
 	bpf_dynptr_write(&ptr, 0, &enter, sizeof(struct sys_enter_info_t), 0);
+	// bpf_printk("dynptr_write error: %d\n", dynptr_err);
 	bpf_dynptr_write(&ptr, offsetof(struct sys_enter_info_t, pathbuf),
 	                 path1, len1, 0);
+	// bpf_printk("dynptr_write error: %d\n", dynptr_err);
 	bpf_dynptr_write(&ptr,
 	                 offsetof(struct sys_enter_info_t, pathbuf) + len1,
 	                 path2, len2, 0);
+	// bpf_printk("dynptr_write error: %d\n", dynptr_err);
 
 	bpf_ringbuf_submit_dynptr(&ptr, 0);
 
@@ -1007,6 +1020,8 @@ BPF_PROG(hs_trace_sys_exit)
 
 	exit.pid_tgid = pid_tgid;
 	exit.ret = ((struct sys_exit_args *)ctx)->ret;
+
+	bpf_dynptr_write(&ptr, 0, &exit, sizeof(struct sys_exit_info_t), 0);
 
 	bpf_ringbuf_submit_dynptr(&ptr, 0);
 
