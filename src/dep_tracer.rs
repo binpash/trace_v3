@@ -196,7 +196,15 @@ impl Display for SyscallEvent {
                 write!(
                     f,
                     "{}(fd={},path={},fd2={},path2={},flags={})",
-                    syscall_nr, fd, path1, fd2, path2, flags
+                    match syscall_of_nr(*syscall_nr as u64) {
+                        Some(syscall) => syscall,
+                        None => "syscall_nr not found",
+                    },
+                    fd,
+                    path1,
+                    fd2,
+                    path2,
+                    flags
                 )
             }
             SyscallEvent::Exit { pid_tgid: _, ret } => {
@@ -372,7 +380,9 @@ impl Context {
             .fd_tables
             .get(&parent_pid)
             .expect(format!("missing fd table for {parent_pid}").as_str());
+        // println!("clone: parent {fd_table:#?}");
         let mut child_fd_table = fd_table.clone();
+        // println!("clone: child {child_fd_table:#?}");
         for (_fd_, file_desc) in child_fd_table.iter_mut() {
             self.open_files.increment_ref_count(file_desc.open_file);
         }
@@ -408,6 +418,7 @@ impl Context {
             .fd_tables
             .get_mut(&pid)
             .expect(format!("expected fd table for pid {pid}").as_str());
+        // println!("ctxt.dup_file: {fd_table:#?}");
         let old_file_desc = fd_table
             .get(&old_fd)
             .expect(format!("expected old fd {old_fd} to be present for pid {pid}").as_str());
@@ -423,6 +434,7 @@ impl Context {
     }
 
     pub fn create_pipe(&mut self, pid_tgid: u64, fd1: i32, fd2: i32, flags: u32, path: PathBuf) {
+        // println!("fds passed to create_pipe are {fd1} and {fd2}");
         let pid = upid_of(pid_tgid);
         let read_end = self.open_files.open_file(0, path.clone());
         let write_end = self.open_files.open_file(0, path);
@@ -449,6 +461,7 @@ impl Context {
                 open_file: write_end,
             },
         );
+        // println!("{fd_table:#?}");
     }
 
     // pub fn close_file(&mut self, pid_tgid: u64, fd: i32) {
@@ -914,19 +927,19 @@ fn parse_openat(
     }
 }
 
-// fn parse_close(
-//     ctxt: &mut Context,
-//     sets: &mut RWSet,
-//     pid_tgid: u64,
-//     ret: i64,
-//     flags: u32,
-//     fd: i32,
-//     path: &str,
-// ) {
-//     // if ret >= 0 {
-//     //     ctxt.close_file(pid_tgid, fd);
-//     // }
-// }
+fn parse_close(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid_tgid: u64,
+    ret: i64,
+    flags: u32,
+    fd: i32,
+    path: &str,
+) {
+    if ret >= 0 {
+        // ctxt.close_file(pid_tgid, fd);
+    }
+}
 
 fn parse_open(
     ctxt: &mut Context,
@@ -1105,10 +1118,12 @@ pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<
     loop {
         match rx.recv() {
             Ok(Some(enter @ SyscallEvent::Enter { pid_tgid, .. })) => {
+                // print!("{enter}");
                 let mut logs = LOGS.lock().unwrap();
                 logs.update_log(pid_tgid, enter)
             }
             Ok(Some(exit @ SyscallEvent::Exit { pid_tgid, ret })) => {
+                // print!("{exit}");
                 let mut logs = LOGS.lock().unwrap();
                 logs.update_log(pid_tgid, exit);
                 let event_queue = logs.log.get(&pid_tgid).unwrap();

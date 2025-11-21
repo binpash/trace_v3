@@ -2,7 +2,7 @@
 #define _HS_TRACE_H_
 
 #ifndef HS_MAX_PATH
-#define HS_MAX_PATH 1024
+#define HS_MAX_PATH 4096
 #endif
 
 #ifndef BUFF_SIZE

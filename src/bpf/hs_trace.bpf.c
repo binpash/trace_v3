@@ -346,6 +346,8 @@ BPF_PROG(hs_trace_create_pipe_exit)
 	exit.pid_tgid = pid_tgid;
 	exit.ret = ((struct sys_exit_pipe2_args *)ctx)->ret;
 
+	bpf_dynptr_write(&ptr, 0, &exit, sizeof(struct sys_exit_info_t), 0);
+
 	bpf_ringbuf_submit_dynptr(&ptr, 0);
 
 	return 0;
@@ -571,17 +573,18 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		event_type = ENTER_PATH1;
 		break;
 #endif
-#ifdef __NR_dup2
-	case __NR_dup2:
-		// FALLTHROUGH
-#endif
 #ifdef __NR_dup3
 	case __NR_dup3:
+		flags = (unsigned int)PT_REGS_PARM3_CORE(regs);
+		// FALLTHROUGH
+#endif
+#ifdef __NR_dup2
+	case __NR_dup2:
+#endif
 		fd = (int)PT_REGS_PARM1_CORE(regs);
 		fd2 = (int)PT_REGS_PARM2_CORE(regs);
 		event_type = ENTER_PATH2;
 		break;
-#endif
 #ifdef __NR_dup
 	case __NR_dup:
 		fd = (int)PT_REGS_PARM1_CORE(regs);
@@ -746,7 +749,15 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 			bpf_printk("failed to read user str path1, %d, "
 			           "pathptr1 = %p\n",
 			           len1, pathptr1);
-			return 0;
+			len1 = bpf_probe_read_kernel_str(path1, HS_MAX_PATH,
+			                                 pathptr1);
+			if (len1 < 0) {
+				bpf_printk(
+				    "failed to read kernel str path1, %d, "
+				    "pathptr1 = %p\n",
+				    len1, pathptr1);
+				return 0;
+			}
 		}
 	}
 	len1 &= (HS_MAX_PATH - 1);
@@ -760,7 +771,15 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		len2 = bpf_probe_read_user_str(path2, HS_MAX_PATH, pathptr2);
 		if (len2 < 0) {
 			bpf_printk("failed to read user str path2, %d\n", len2);
-			return 0;
+			len2 = bpf_probe_read_kernel_str(path2, HS_MAX_PATH,
+			                                 pathptr2);
+			if (len2 < 0) {
+				bpf_printk(
+				    "failed to read kernel str path2, %d, "
+				    "pathptr2 = %p\n",
+				    len2, pathptr2);
+				return 0;
+			}
 		}
 	}
 	len2 &= (HS_MAX_PATH - 1);

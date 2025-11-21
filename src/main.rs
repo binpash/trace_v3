@@ -209,15 +209,27 @@ fn main() -> Result<()> {
             let path1_len = header.path1_len as usize;
             let path2_len = header.path2_len as usize;
 
-            let path1_data = &data[header_len..header_len + path1_len];
-            let path2_data = &data[header_len + path1_len..header_len + path1_len + path2_len];
+            let path1_data = &data[header_len..(header_len + path1_len)];
+            let path2_data = &data[(header_len + path1_len)..(header_len + path1_len + path2_len)];
 
-            let path1 = std::str::from_utf8(path1_data)
-                .expect("invalid utf8 string")
-                .to_string();
-            let path2 = std::str::from_utf8(path2_data)
-                .expect("invalid utf8 string")
-                .to_string();
+            let path1 = if path1_len > 0 {
+                CStr::from_bytes_with_nul(path1_data)
+                    .expect("invalid C string")
+                    .to_str()
+                    .expect("should be valid str")
+                    .to_string()
+            } else {
+                String::new()
+            };
+            let path2 = if path2_len > 0 {
+                CStr::from_bytes_with_nul(path2_data)
+                    .expect("invalid C string")
+                    .to_str()
+                    .expect("should be valid str")
+                    .to_string()
+            } else {
+                String::new()
+            };
 
             SyscallEvent::Enter {
                 pid_tgid: header.pid_tgid,
@@ -316,5 +328,6 @@ fn main() -> Result<()> {
             }
         }
     }
+    println!("{program_total} missed events during the duration of the program");
     Ok(())
 }
