@@ -1,24 +1,14 @@
 use anyhow::Result;
-use libbpf_sys::libbpf_num_possible_cpus;
-use libbpf_sys::{
-    BPF_FUNC_map_lookup_percpu_elem, bpf_map__fd, bpf_map__lookup_elem, bpf_map_lookup_elem,
-};
 use libc::{
-    O_WRONLY, SA_NOCLDSTOP, SA_RESTART, SIG_BLOCK, SIG_UNBLOCK, SIGCHLD, SIGUSR1, STDERR_FILENO,
-    STDOUT_FILENO, c_int, dup2, kill, open, sigaction, sigaddset, sigemptyset, sighandler_t,
-    sigprocmask, sigset_t, sigwait, waitpid,
+    SA_NOCLDSTOP, SA_RESTART, SIG_BLOCK, SIG_UNBLOCK, SIGCHLD, SIGUSR1, c_int, kill, sigaction,
+    sigaddset, sigemptyset, sighandler_t, sigprocmask, sigset_t, sigwait, waitpid,
 };
-use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
-use std::mem::{MaybeUninit, offset_of, size_of, zeroed};
-use std::os::fd::{AsFd, AsRawFd};
+use std::mem::{MaybeUninit, size_of, zeroed};
 use std::os::raw::c_char;
-use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::path::PathBuf;
-use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -26,7 +16,7 @@ use std::{env, fs, ptr};
 // use clap::Parser;
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
-use nix::unistd::{Gid, Uid, getuid, setgroups, setresgid, setresuid};
+use nix::unistd::{Gid, Uid, setgroups, setresgid, setresuid};
 // use plain::Plain;
 // use time::OffsetDateTime;
 // use time::macros::format_description;
@@ -68,7 +58,7 @@ fn find_sudo_invoker() -> Option<(u32, u32)> {
     Some((prev_uid, prev_grp))
 }
 fn main() -> Result<()> {
-    let mut args = std::env::args();
+    let args = std::env::args();
 
     unsafe {
         let mut sa: sigaction = zeroed();
@@ -175,7 +165,7 @@ fn main() -> Result<()> {
     let runner_pid = unsafe { libc::getpid() };
     println!("parent: {runner_pid} child: {target_pid}");
     // TODO: check if native endianness is correct!
-    let runner_pid_buf = &runner_pid.to_ne_bytes();
+    let _runner_pid_buf = &runner_pid.to_ne_bytes();
     let target_pid_buf = &target_pid.to_ne_bytes();
     let dummy_val: i32 = 1;
     let dummy_bytes = &dummy_val.to_ne_bytes();
@@ -305,7 +295,7 @@ fn main() -> Result<()> {
         Err(_) => {}
     }
     let _ = stream_handler.join();
-    let ctxt = CTXT.lock().unwrap();
+    // let ctxt = CTXT.lock().unwrap();
     let mut logs = LOGS.lock().unwrap();
     logs.dump_log();
 

@@ -7,9 +7,6 @@ use std::process::{Command, Stdio};
 use libbpf_cargo::SkeletonBuilder;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    println!("cargo::rerun-if-env-changed=HS_MAX_PATH");
-    let size = env::var("HS_MAX_PATH").unwrap_or_else(|_| "4096".into());
-
     println!("cargo::rerun-if-env-changed=BUFF_SIZE");
     let buffer = env::var("BUFF_SIZE").unwrap_or_else(|_| "4".into());
 
@@ -54,7 +51,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             &target_arch_flag,
             "-Wall",
             &include_flag,
-            &format!("-DHS_MAX_PATH={size}"),
             &format!("-DBUFF_SIZE={buffer}"),
         ])
         .build_and_generate("src/bpf/hs_trace.skel.rs")?;
@@ -69,8 +65,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         // Finish the builder and generate the bindings.
-        .clang_arg(format!("-DHS_MAX_PATH={size}"))
         .clang_arg(format!("-DBUFF_SIZE={buffer}"))
+        // .rust_edition(bindgen::RustEdition::Edition2024)
+        // .rust_target(bindgen::RustTarget::nightly())
         .generate()?
         .write_to_file(outdir.join("bindings.rs"))?;
 

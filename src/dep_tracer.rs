@@ -1,152 +1,14 @@
 use anyhow::Result;
-use libc::{self, dirfd};
-use nix::sys;
+use libc::{self};
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::ffi::CStr;
 use std::fmt;
 use std::fmt::Display;
 use std::path::{Component, PathBuf};
+use std::sync::Mutex;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex, RwLock};
 use syscallnrs::syscall_of_nr;
 use trace_v3::*;
-
-#[cfg(target_arch = "x86_64")]
-pub fn individually_handled_syscall_map() -> HashMap<i64, &'static str> {
-    let mut m = HashMap::new();
-
-    m.insert(libc::SYS_openat, "openat");
-    m.insert(libc::SYS_open, "open");
-    m.insert(libc::SYS_chdir, "chdir");
-    m.insert(libc::SYS_clone, "clone");
-    m.insert(libc::SYS_rename, "rename");
-    m.insert(libc::SYS_symlinkat, "symlinkat");
-    m.insert(libc::SYS_link, "link");
-    m
-}
-#[cfg(target_arch = "aarch64")]
-pub fn individually_handled_syscall_map() -> HashMap<i64, &'static str> {
-    let mut m = HashMap::new();
-
-    m.insert(libc::SYS_openat, "openat");
-    m.insert(libc::SYS_chdir, "chdir");
-    m.insert(libc::SYS_clone, "clone");
-    m.insert(libc::SYS_symlinkat, "symlinkat");
-    m
-}
-#[cfg(target_arch = "x86_64")]
-pub fn r_path_syscall_map() -> HashMap<i64, &'static str> {
-    let mut m = HashMap::new();
-
-    m.insert(libc::SYS_execve, "execve");
-    m.insert(libc::SYS_stat, "stat");
-    m.insert(libc::SYS_lstat, "lstat");
-    m.insert(libc::SYS_access, "access");
-    m.insert(libc::SYS_statfs, "statfs");
-    m.insert(libc::SYS_readlink, "readlink");
-    m.insert(libc::SYS_execve, "execve");
-    m.insert(libc::SYS_getxattr, "getxattr");
-    m.insert(libc::SYS_lgetxattr, "lgetxattr");
-    m.insert(libc::SYS_llistxattr, "llistxattr");
-    m
-}
-#[cfg(target_arch = "aarch64")]
-pub fn r_path_syscall_map() -> HashMap<i64, &'static str> {
-    let mut m = HashMap::new();
-
-    m.insert(libc::SYS_execve, "execve");
-    m.insert(libc::SYS_statfs, "statfs");
-    m.insert(libc::SYS_execve, "execve");
-    m.insert(libc::SYS_getxattr, "getxattr");
-    m.insert(libc::SYS_lgetxattr, "lgetxattr");
-    m.insert(libc::SYS_llistxattr, "llistxattr");
-    m
-}
-#[cfg(target_arch = "x86_64")]
-pub fn w_path_syscall_map() -> HashMap<i64, &'static str> {
-    let mut m = HashMap::new();
-
-    m.insert(libc::SYS_mkdir, "mkdir");
-    m.insert(libc::SYS_rmdir, "rmdir");
-    m.insert(libc::SYS_truncate, "truncate");
-    m.insert(libc::SYS_creat, "creat");
-    m.insert(libc::SYS_chmod, "chmod");
-    m.insert(libc::SYS_chown, "chown");
-    m.insert(libc::SYS_lchown, "lchown");
-    m.insert(libc::SYS_utime, "utime");
-    m.insert(libc::SYS_mknod, "mknod");
-    m.insert(libc::SYS_utimes, "utimes");
-    m.insert(libc::SYS_acct, "acct");
-    m.insert(libc::SYS_unlink, "unlink");
-    m.insert(libc::SYS_setxattr, "setxattr");
-    m.insert(libc::SYS_removexattr, "removexattr");
-    m
-}
-#[cfg(target_arch = "aarch64")]
-pub fn w_path_syscall_map() -> HashMap<i64, &'static str> {
-    let mut m = HashMap::new();
-
-    m.insert(libc::SYS_truncate, "truncate");
-    m.insert(libc::SYS_acct, "acct");
-    m.insert(libc::SYS_setxattr, "setxattr");
-    m.insert(libc::SYS_removexattr, "removexattr");
-    m
-}
-#[cfg(target_arch = "x86_64")]
-pub fn r_fd_path_syscall_map() -> HashMap<i64, &'static str> {
-    let mut m = HashMap::new();
-
-    m.insert(libc::SYS_fstatat, "fstatat");
-    m.insert(libc::SYS_newfstatat, "newfstatat");
-    m.insert(libc::SYS_statx, "statx");
-    m.insert(libc::SYS_name_to_handle_at, "name_to_handle_at");
-    m.insert(libc::SYS_readlinkat, "readlinkat");
-    m.insert(libc::SYS_faccessat, "faccessat");
-    m.insert(libc::SYS_execveat, "execveat");
-    m.insert(libc::SYS_faccessat2, "faccessat2");
-    m
-}
-#[cfg(target_arch = "aarch64")]
-pub fn r_fd_path_syscall_map() -> HashMap<i64, &'static str> {
-    let mut m = HashMap::new();
-
-    m.insert(libc::SYS_newfstatat, "newfstatat");
-    m.insert(libc::SYS_statx, "statx");
-    m.insert(libc::SYS_name_to_handle_at, "name_to_handle_at");
-    m.insert(libc::SYS_readlinkat, "readlinkat");
-    m.insert(libc::SYS_faccessat, "faccessat");
-    m.insert(libc::SYS_execveat, "execveat");
-    m.insert(libc::SYS_faccessat2, "faccessat2");
-    m
-}
-#[cfg(target_arch = "x86_64")]
-pub fn w_fd_path_syscall_map() -> HashMap<i64, &'static str> {
-    let mut m = HashMap::new();
-
-    m.insert(libc::SYS_unlinkat, "unlinkat");
-    m.insert(libc::SYS_utimensat, "utimensat");
-    m.insert(libc::SYS_mkdirat, "mkdirat");
-    m.insert(libc::SYS_mknodat, "mknodat");
-    m.insert(libc::SYS_fchownat, "fchownat");
-    m.insert(libc::SYS_futimeat, "futimeat");
-    m.insert(libc::SYS_linkat, "linkat");
-    m.insert(libc::SYS_fchmodat, "fchmodat");
-    m
-}
-#[cfg(target_arch = "aarch64")]
-pub fn w_fd_path_syscall_map() -> HashMap<i64, &'static str> {
-    let mut m = HashMap::new();
-
-    m.insert(libc::SYS_unlinkat, "unlinkat");
-    m.insert(libc::SYS_utimensat, "utimensat");
-    m.insert(libc::SYS_mkdirat, "mkdirat");
-    m.insert(libc::SYS_mknodat, "mknodat");
-    m.insert(libc::SYS_fchownat, "fchownat");
-    m.insert(libc::SYS_linkat, "linkat");
-    m.insert(libc::SYS_fchmodat, "fchmodat");
-    m
-}
 
 #[inline(always)]
 pub fn upid_of(pid_tgid: u64) -> u32 {
@@ -310,6 +172,7 @@ impl OpenFileTable {
         file
     }
 
+    #[allow(dead_code)]
     pub fn close_file(&mut self, file: u32) {
         let mut cnt = 0;
         if let Some(file) = self.table.get_mut(&file) {
@@ -323,6 +186,7 @@ impl OpenFileTable {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_flags(&mut self, file: u32) -> u32 {
         let open_file = self
             .table
@@ -332,6 +196,7 @@ impl OpenFileTable {
         open_file.status_flags
     }
 
+    #[allow(dead_code)]
     pub fn set_flags(&mut self, file: u32, status_flags: u32) {
         let open_file = self
             .table
@@ -464,20 +329,21 @@ impl Context {
         // println!("{fd_table:#?}");
     }
 
-    // pub fn close_file(&mut self, pid_tgid: u64, fd: i32) {
-    //     let pid = upid_of(pid_tgid);
-    //     let fd_table = self
-    //         .fd_tables
-    //         .get_mut(&pid)
-    //         .expect(format!("expected fd table for pid {pid}").as_str());
-    //     // if !fd_table.contains_key(&fd) {
-    //     //     println!("{fd}");
-    //     //     println!("{fd_table:#?}")
-    //     // }
-    //     self.open_files
-    //         .close_file(fd_table.get(&fd).unwrap().open_file);
-    //     fd_table.remove(&fd);
-    // }
+    #[allow(dead_code)]
+    pub fn close_file(&mut self, pid_tgid: u64, fd: i32) {
+        let pid = upid_of(pid_tgid);
+        let fd_table = self
+            .fd_tables
+            .get_mut(&pid)
+            .expect(format!("expected fd table for pid {pid}").as_str());
+        // if !fd_table.contains_key(&fd) {
+        //     println!("{fd}");
+        //     println!("{fd_table:#?}")
+        // }
+        self.open_files
+            .close_file(fd_table.get(&fd).unwrap().open_file);
+        fd_table.remove(&fd);
+    }
 
     pub fn get_fd_flags(&mut self, pid_tgid: u64, fd: i32) -> u32 {
         let pid = upid_of(pid_tgid);
@@ -577,6 +443,7 @@ enum SyscallInfo<'a> {
         pid_tgid: u64,
         ret: i64,
         syscall_nr: i64,
+        #[allow(dead_code)]
         flags: u32,
     },
     Event1 {
@@ -600,7 +467,6 @@ enum SyscallInfo<'a> {
     EventFcntl {
         pid_tgid: u64,
         ret: i64,
-        syscall_nr: i64,
         fd: i32,
         cmd: u64,
         arg: u64,
@@ -635,18 +501,10 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             libc::SYS_openat | libc::SYS_openat2 => {
                 parse_openat(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, path)
             }
-            // #[cfg(target_arch = "x86_64")]
-            // libc::SYS_open => {
-            //     let mut ctxt = CTXT.lock().unwrap();
-            //     let mut sets = SETS.lock().unwrap();
-            //     parse_open(
-            //         &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, &path,
-            //     )
-            // }
+            #[cfg(target_arch = "x86_64")]
+            libc::SYS_open => parse_open(&mut ctxt, &mut sets, pid_tgid, ret, flags, &path),
             libc::SYS_chdir => parse_chdir(&mut ctxt, &mut sets, pid_tgid, ret, path),
-            libc::SYS_symlinkat => parse_symlinkat(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, path,
-            ),
+            libc::SYS_symlinkat => parse_symlinkat(&mut ctxt, &mut sets, pid_tgid, ret, fd, path),
             // libc::SYS_symlink => {}
             // r path
             libc::SYS_execve | libc::SYS_statfs | libc::SYS_getxattr | libc::SYS_lgetxattr => {
@@ -685,9 +543,9 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             | libc::SYS_mkdirat
             | libc::SYS_mknodat
             | libc::SYS_fchownat
-            | libc::SYS_fchmodat => parse_w_fd_path_e1(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, path,
-            ),
+            | libc::SYS_fchmodat => {
+                parse_w_fd_path_e1(&mut ctxt, &mut sets, pid_tgid, ret, fd, path)
+            }
             // libc::SYS_futimeat => {}
             libc::SYS_memfd_create => {
                 parse_memfd_create(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, path)
@@ -709,16 +567,15 @@ fn on_event_update_rw_sets(event: SyscallInfo) {
             libc::SYS_dup3 => parse_dup23(&mut ctxt, pid_tgid, ret, flags, fd, fd2),
             // libc::SYS_link => {}
             // libc::SYS_rename => {}
-            libc::SYS_renameat | libc::SYS_renameat2 => parse_renameat(
-                &mut ctxt, &mut sets, pid_tgid, ret, syscall_nr, flags, fd, path, fd2, path2,
-            ),
+            libc::SYS_renameat | libc::SYS_renameat2 => {
+                parse_renameat(&mut ctxt, &mut sets, pid_tgid, fd, path, fd2, path2)
+            }
             libc::SYS_pipe2 => parse_pipe2(&mut ctxt, &mut sets, pid_tgid, flags, fd, path, fd2),
             _ => {}
         },
         SyscallInfo::EventFcntl {
             pid_tgid,
             ret,
-            syscall_nr: _,
             fd,
             cmd,
             arg,
@@ -927,20 +784,14 @@ fn parse_openat(
     }
 }
 
-fn parse_close(
-    ctxt: &mut Context,
-    sets: &mut RWSet,
-    pid_tgid: u64,
-    ret: i64,
-    flags: u32,
-    fd: i32,
-    path: &str,
-) {
+#[allow(dead_code)]
+fn parse_close(ret: i64) {
     if ret >= 0 {
         // ctxt.close_file(pid_tgid, fd);
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 fn parse_open(
     ctxt: &mut Context,
     sets: &mut RWSet,
@@ -998,8 +849,6 @@ fn parse_symlinkat(
     sets: &mut RWSet,
     pid_tgid: u64,
     ret: i64,
-    syscall_nr: i64,
-    flags: u32,
     fd: i32,
     path: &str,
 ) {
@@ -1058,8 +907,6 @@ fn parse_w_fd_path_e1(
     sets: &mut RWSet,
     pid_tgid: u64,
     ret: i64,
-    syscall_nr: i64,
-    flags: u32,
     fd: i32,
     path: &str,
 ) {
@@ -1082,9 +929,6 @@ fn parse_renameat(
     ctxt: &mut Context,
     sets: &mut RWSet,
     pid_tgid: u64,
-    ret: i64,
-    syscall_nr: i64,
-    flags: u32,
     fd: i32,
     path: &str,
     fd2: i32,
@@ -1176,7 +1020,6 @@ pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>) -> Result<
                             on_event_update_rw_sets(SyscallInfo::EventFcntl {
                                 pid_tgid: *pid_tgid,
                                 ret,
-                                syscall_nr: *syscall_nr,
                                 fd: *fd,
                                 cmd: *cmd,
                                 arg: *arg,

@@ -23,7 +23,7 @@ struct {
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__type(key, u32);
-	__type(value, char[HS_MAX_PATH]);
+	__type(value, char[PATH_MAX]);
 	__uint(max_entries, 2);
 } paths SEC(".maps");
 
@@ -145,12 +145,12 @@ BPF_PROG(hs_trace_enter_memfd_create)
 		return 0;
 	}
 	int len1 =
-	    BPF_SNPRINTF(path1, HS_MAX_PATH, "memfd:%s",
+	    BPF_SNPRINTF(path1, PATH_MAX, "memfd:%s",
 	                 ((struct sys_enter_memfd_create_args *)ctx)->uname);
 	if (len1 < 0) {
 		return 0;
 	}
-	len1 &= (HS_MAX_PATH - 1);
+	len1 &= (PATH_MAX - 1);
 
 	struct sys_enter_info_t enter1;
 	struct bpf_dynptr ptr;
@@ -281,11 +281,11 @@ BPF_PROG(hs_trace_create_pipe_exit)
 		// SHOULDN'T HAPPEN
 		return 0;
 	}
-	int len1 = BPF_SNPRINTF(path1, HS_MAX_PATH, "pipe:[%d]", ino);
+	int len1 = BPF_SNPRINTF(path1, PATH_MAX, "pipe:[%d]", ino);
 	if (len1 < 0) {
 		return 0;
 	}
-	len1 &= (HS_MAX_PATH - 1);
+	len1 &= (PATH_MAX - 1);
 
 	struct sys_enter_info_t enter2;
 	struct bpf_dynptr ptr;
@@ -744,12 +744,12 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	}
 	long len1 = 0;
 	if (pathptr1 != NULL) {
-		len1 = bpf_probe_read_user_str(path1, HS_MAX_PATH, pathptr1);
+		len1 = bpf_probe_read_user_str(path1, PATH_MAX, pathptr1);
 		if (len1 < 0) {
 			bpf_printk("failed to read user str path1, %d, "
 			           "pathptr1 = %p\n",
 			           len1, pathptr1);
-			len1 = bpf_probe_read_kernel_str(path1, HS_MAX_PATH,
+			len1 = bpf_probe_read_kernel_str(path1, PATH_MAX,
 			                                 pathptr1);
 			if (len1 < 0) {
 				bpf_printk(
@@ -760,7 +760,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 			}
 		}
 	}
-	len1 &= (HS_MAX_PATH - 1);
+	len1 &= (PATH_MAX - 1);
 	char *path2;
 	if ((path2 = bpf_map_lookup_elem(&paths, &key1)) == NULL) {
 		// SHOULDN'T HAPPEN
@@ -768,10 +768,10 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	}
 	long len2 = 0;
 	if (pathptr2 != NULL) {
-		len2 = bpf_probe_read_user_str(path2, HS_MAX_PATH, pathptr2);
+		len2 = bpf_probe_read_user_str(path2, PATH_MAX, pathptr2);
 		if (len2 < 0) {
 			bpf_printk("failed to read user str path2, %d\n", len2);
-			len2 = bpf_probe_read_kernel_str(path2, HS_MAX_PATH,
+			len2 = bpf_probe_read_kernel_str(path2, PATH_MAX,
 			                                 pathptr2);
 			if (len2 < 0) {
 				bpf_printk(
@@ -782,7 +782,7 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 			}
 		}
 	}
-	len2 &= (HS_MAX_PATH - 1);
+	len2 &= (PATH_MAX - 1);
 
 	if (bpf_ringbuf_reserve_dynptr(
 		&output, sizeof(struct sys_enter_info_t) + len1 + len2, 0,
