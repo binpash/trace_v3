@@ -8,6 +8,7 @@ for test in "${PROJ_ROOT}"/tests/short/test-*.sh
 do
     ${test} 1>"${test}.out" 2>"${test}.err"
 
+    echo "Running $(basename $test)"
     echo "==== STDOUT ===="
     cat "${test}.out"
     echo "==== STDERR ===="
@@ -18,6 +19,7 @@ for test in "${PROJ_ROOT}"/tests/long/test-*.sh
 do
     ${test} 1>"${test}.out" 2>"${test}.err"
 
+    echo "Running $(basename $test)"
     echo "==== STDOUT ===="
     cat "${test}.out"
     echo "==== STDERR ===="
