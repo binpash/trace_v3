@@ -2,7 +2,7 @@
 set -e
 
 PROJ_ROOT="${PROJ_ROOT:-$(git rev-parse --show-toplevel)}"
-TEST="${PROJ_ROOT}"/tests
+TEST="${PROJ_ROOT}"/tests/long
 TRACE=${TRACE:-$1}
 
 mkdir -p "${TEST}"/repoclone

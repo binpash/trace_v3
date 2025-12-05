@@ -2,9 +2,19 @@
 
 export PROJ_ROOT="$(git rev-parse --show-toplevel)"
 
-export TRACE="${PROJ_ROOT}"/target/debug/trace_v3
+export TRACE=$(which trace_v3)
 
-for test in "${PROJ_ROOT}"/tests/test-*.sh
+for test in "${PROJ_ROOT}"/tests/short/test-*.sh
+do
+    ${test} 1>"${test}.out" 2>"${test}.err"
+
+    echo "==== STDOUT ===="
+    cat "${test}.out"
+    echo "==== STDERR ===="
+    cat "${test}.err"
+done
+
+for test in "${PROJ_ROOT}"/tests/long/test-*.sh
 do
     ${test} 1>"${test}.out" 2>"${test}.err"
 
