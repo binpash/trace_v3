@@ -58,16 +58,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=src/bpf/hs_trace.h");
     let outdir = PathBuf::from(env::var("OUT_DIR").unwrap());
     bindgen::Builder::default()
-        // The input header we would like to generate
-        // bindings for.
         .header("src/bpf/hs_trace.h")
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         // Finish the builder and generate the bindings.
         .clang_arg(format!("-DBUFF_SIZE={buffer}"))
-        // .rust_edition(bindgen::RustEdition::Edition2024)
-        // .rust_target(bindgen::RustTarget::nightly())
         .generate()?
         .write_to_file(outdir.join("bindings.rs"))?;
 
