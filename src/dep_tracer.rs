@@ -1,12 +1,18 @@
+use crate::find_sudo_invoker;
+use crate::hs_trace::types::path;
 use anyhow::Result;
-use libc::{self};
+use libc::{self, FILE};
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt;
 use std::fmt::Display;
+use std::fs::{self, File, ReadDir};
+use std::io::Write;
+use std::os::unix::fs::chown;
+use std::path::Path;
 use std::path::{Component, PathBuf};
 use std::sync::mpsc;
 use std::sync::Mutex;
+use std::{env, fmt};
 use syscallnrs::syscall_of_nr;
 use trace_v3::*;
 
@@ -115,10 +121,15 @@ impl Logs {
                 write!(out, "{e}")?;
             }
         }
+
         Ok(())
     }
 }
 
+fn get_default_output_path() -> PathBuf {
+    //must be run with cargo
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
 #[derive(Clone, Debug)]
 struct OpenFile {
     ref_cnt: u32,
@@ -415,16 +426,21 @@ impl RWSet {
     pub fn dump_sets(&mut self, mut out: impl std::io::Write) -> Result<()> {
         let rset = &self.read_set;
         let wset = &self.write_set;
+
         writeln!(out, "Read set")?;
+
         let mut r = Vec::from_iter(rset);
         r.sort();
+
         for p in r {
             writeln!(out, "{p:?}")?;
         }
 
         writeln!(out, "Write set")?;
+
         let mut w = Vec::from_iter(wset);
         w.sort();
+
         for p in w {
             writeln!(out, "{p:?}")?;
         }

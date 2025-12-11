@@ -46,6 +46,44 @@ impl Outputs {
     }
 }
 
+/*
+        let (prev_uid, prev_grp) = find_sudo_invoker().unwrap();
+
+        // 1. Create a helper closure to apply ownership.
+        // This keeps the code clean and ensures we don't forget any file.
+        let set_owner = |path: &Path| {
+            chown(path, Some(prev_uid), Some(prev_grp))
+                .expect("Failed to change file ownership to non-sudo user");
+        };
+
+        let output_path = if let Some(p) = path {
+            p
+        } else {
+            get_default_output_path().join("output")
+        };
+
+        // 2. Fix: Use create_dir_all so it doesn't crash if parents are missing.
+        // We check !exists() to avoid overwriting permissions if it's already there (optional).
+        if !output_path.exists() {
+            fs::create_dir_all(&output_path).expect("Could not create output root");
+            set_owner(&output_path);
+        }
+        // 3. Create the specific sub-directory
+        let output_dir = output_path.join((sorted_logs[0].0).to_string());
+
+        // Use create_dir_all for safety
+        if !output_dir.exists() {
+            fs::create_dir_all(&output_dir).expect("could not create specific output dir");
+            set_owner(&output_dir);
+        }
+
+        // 4. Create and chown the logs file
+        let log_path = output_dir.join("logs");
+        let mut log_file = fs::File::create(&log_path).unwrap();
+        set_owner(&log_path);
+
+*/
+
 fn make_output(target: &str) -> io::Result<Output> {
     match target {
         "-" => Ok(Box::new(io::stdout())),
