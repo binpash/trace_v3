@@ -53,7 +53,7 @@ fn main() -> Result<()> {
 
     unsafe {
         let mut sa: sigaction = zeroed();
-        sa.sa_sigaction = sigchld_handler as sighandler_t;
+        sa.sa_sigaction = sigchld_handler as *const () as sighandler_t;
         sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
         sigemptyset(&mut sa.sa_mask);
 
