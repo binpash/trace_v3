@@ -1,40 +1,31 @@
 use anyhow::Result;
 use libc::{
-    SA_NOCLDSTOP, SA_RESTART, SIG_BLOCK, SIG_UNBLOCK, SIGCHLD, SIGUSR1, c_int, kill, sigaction,
-    sigaddset, sigemptyset, sighandler_t, sigprocmask, sigset_t, sigwait, waitpid,
+    c_int, kill, sigaction, sigaddset, sigemptyset, sighandler_t, sigprocmask, sigset_t, sigwait,
+    waitpid, SA_NOCLDSTOP, SA_RESTART, SIGCHLD, SIGUSR1, SIG_BLOCK, SIG_UNBLOCK,
 };
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
-use std::mem::{MaybeUninit, size_of, zeroed};
+use std::mem::{size_of, zeroed, MaybeUninit};
 use std::os::raw::c_char;
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 use std::{env, fs, ptr};
 // use clap::Parser;
-use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
-use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
-use nix::unistd::{Gid, Uid, setgroups, setresgid, setresuid};
+use libbpf_rs::{MapCore, MapFlags, MapHandle, RingBufferBuilder};
+use nix::unistd::{setgroups, setresgid, setresuid, Gid, Uid};
 // use plain::Plain;
 // use time::OffsetDateTime;
 // use time::macros::format_description;
 
-mod hs_trace {
-    include!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/bpf/hs_trace.skel.rs"
-    ));
-}
-
 #[allow(clippy::wildcard_imports)]
-use hs_trace::*;
 use trace_v3::*;
 
 mod dep_tracer;
-use crate::dep_tracer::SyscallEvent;
 use crate::dep_tracer::event_stream_handler;
+use crate::dep_tracer::SyscallEvent;
 use crate::dep_tracer::{CTXT, LOGS, SETS};
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -149,40 +140,37 @@ fn main() -> Result<()> {
         }
     }
 
-    let skel_builder = HsTraceSkelBuilder::default();
-    // if opts.verbose {
-    //     skel_builder.obj_builder.debug(true);
-    // }
-
-    let mut open_object = MaybeUninit::uninit();
-    let open_skel = skel_builder.open(&mut open_object)?;
-
-    // Begin tracing
-    let mut skel = open_skel.load()?;
-    skel.attach()?;
+    // let skel_builder = HsTraceSkelBuilder::default();
+    // // if opts.verbose {
+    // //     skel_builder.obj_builder.debug(true);
+    // // }
+    //
+    // let mut open_object = MaybeUninit::uninit();
+    // let open_skel = skel_builder.open(&mut open_object)?;
+    //
+    // // Begin tracing
+    // let mut skel = open_skel.load()?;
+    // skel.attach()?;
 
     // update the map
     let runner_pid = unsafe { libc::getpid() };
     println!("parent: {runner_pid} child: {target_pid}");
     // TODO: check if native endianness is correct!
-    let _runner_pid_buf = &runner_pid.to_ne_bytes();
     let target_pid_buf = &target_pid.to_ne_bytes();
     let dummy_val: i32 = 1;
     let dummy_bytes = &dummy_val.to_ne_bytes();
-    // skel.maps
-    //     .pid_set
-    //     .update(runner_pid_buf, dummy_bytes, MapFlags::ANY)?;
-    skel.maps
-        .pid_set
-        .update(target_pid_buf, dummy_bytes, MapFlags::ANY)?;
+
+    let pid_set = MapHandle::from_pinned_path("/sys/fs/bpf/hs_trace_pid_set")?;
+    pid_set.update(target_pid_buf, dummy_bytes, MapFlags::ANY)?;
 
     // create channel and spawn worker thread
     let (sender, receiver) = mpsc::channel::<Option<SyscallEvent>>();
     let stream_handler = thread::spawn(move || event_stream_handler(receiver));
 
     // setup ringbuf
+    let rb_map = MapHandle::from_pinned_path("/sys/fs/bpf/hs_trace_output")?;
     let mut rb_builder = RingBufferBuilder::new();
-    rb_builder.add(&skel.maps.output, |data| {
+    rb_builder.add(&rb_map, |data| {
         // println!("received {} bytes", data.len());
         let event = if data.len() == size_of::<sys_exit_info_t>() {
             let header = unsafe { &*data.as_ptr().cast::<sys_exit_info_t>() };
@@ -242,6 +230,8 @@ fn main() -> Result<()> {
         return 0;
     })?;
     let rb = rb_builder.build()?;
+
+    let missed_events = MapHandle::from_pinned_path("/sys/fs/bpf/hs_trace_missed_events")?;
     // start the child
     unsafe {
         kill(target_pid as i32, SIGUSR1);
@@ -256,7 +246,7 @@ fn main() -> Result<()> {
             Err(_) => {}
         }
 
-        if let Some(count_per_cpu) = skel.maps.missed_events.lookup_percpu(&key, MapFlags::ANY)? {
+        if let Some(count_per_cpu) = missed_events.lookup_percpu(&key, MapFlags::ANY)? {
             let mut total = 0;
 
             for missed in count_per_cpu {
@@ -307,7 +297,7 @@ fn main() -> Result<()> {
 
     if cfg!(debug_assertions) {
         for dir in potential_added_dirs {
-            let path = Path::new(dir);
+            let path = PathBuf::from(dir);
             if path.is_dir() {
                 println!("Removing directory: {}", dir);
                 if let Err(e) = fs::remove_dir_all(path) {
