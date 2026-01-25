@@ -17,6 +17,10 @@ pub struct Cli {
     #[arg(long, default_value = "-")]
     pub dep_file: String,
 
+    /// Attach to an existing process by PID
+    #[arg(short = 'p', long = "pid")]
+    pub pid: Option<i32>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 
@@ -47,6 +51,15 @@ impl Outputs {
 }
 
 /*
+
+
+    let mut attach_to_existing_proc = false;
+    let mut val: i32 = -1;
+    if let Some(pid) = check_flags.pid {
+        attach_to_existing_proc = true;
+        val = pid;
+    }
+
         let (prev_uid, prev_grp) = find_sudo_invoker().unwrap();
 
         // 1. Create a helper closure to apply ownership.

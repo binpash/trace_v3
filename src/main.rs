@@ -18,6 +18,8 @@ use std::{env, ptr};
 // use plain::Plain;
 // use time::OffsetDateTime;
 // use time::macros::format_description;
+use clap::Parser;
+use std::os::unix::io::RawFd;
 
 mod cli;
 mod dep_tracer;
@@ -53,6 +55,16 @@ fn find_sudo_invoker() -> Option<(u32, u32)> {
     Some((prev_uid, prev_grp))
 }
 
+fn monitor_pid(pid: i32) -> std::io::Result<RawFd> {
+    unsafe {
+        let fd = libc::syscall(libc::SYS_pidfd_open, pid, 0);
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(fd as RawFd)
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     if let Some(Commands::Install {}) = cli.command {
@@ -77,61 +89,64 @@ fn main() -> Result<()> {
     }
 
     let target_pid;
-    unsafe {
-        target_pid = libc::fork();
-    }
-    if target_pid < 0 {
-        Err(Error::new(ErrorKind::Other, "couldn't fork"))?;
-    }
-    if target_pid == 0 {
+    if !attach_to_existing_proc {
         unsafe {
-            let mut set: sigset_t = zeroed();
-            sigemptyset(&mut set);
-            sigaddset(&mut set, SIGUSR1);
-
-            // block SIGUSR1, so it can become pending
-            sigprocmask(SIG_BLOCK, &mut set, ptr::null_mut());
-
-            // wait on SIGUSR1
-            let mut sig = zeroed();
-            if sigwait(&mut set, &mut sig) != 0 {
-                Err(Error::new(ErrorKind::Other, "couldn't sigwait"))?;
-            }
-
-            // unblock SIGUSR1
-            sigemptyset(&mut set);
-            sigprocmask(SIG_UNBLOCK, &mut set, ptr::null_mut());
-
-            let cstr_args: Vec<CString> = cli
-                .cmd
-                .iter()
-                .map(|s| CString::new(s.as_str()).expect("NUL byte in argument"))
-                .collect();
-
-            // build argv
-            let mut argv: Vec<*const c_char> = cstr_args.iter().map(|s| s.as_ptr()).collect();
-            argv.push(std::ptr::null());
-
-            let prog = &cstr_args[0];
-
-            match find_sudo_invoker() {
-                Some((uid, gid)) => {
-                    let target_uid = Uid::from_raw(uid);
-                    let target_gid = Gid::from_raw(gid);
-                    setgroups(&[]).expect("setgroups");
-
-                    setresgid(target_gid, target_gid, target_gid).expect("setresgid");
-                    setresuid(target_uid, target_uid, target_uid).expect("setresuid");
-                }
-                None => {}
-            }
-
-            libc::execvp(prog.as_ptr(), argv.as_ptr());
-            libc::perror(b"execvp failed\0".as_ptr() as _);
-            libc::_exit(127);
+            target_pid = libc::fork();
         }
-    }
+        if target_pid < 0 {
+            Err(Error::new(ErrorKind::Other, "couldn't fork"))?;
+        }
+        if target_pid == 0 {
+            unsafe {
+                let mut set: sigset_t = zeroed();
 
+                // block SIGUSR1, so it can become pending
+                sigemptyset(&mut set);
+                sigaddset(&mut set, SIGUSR1);
+                sigprocmask(SIG_BLOCK, &mut set, ptr::null_mut());
+
+                // wait on SIGUSR1
+                let mut sig = zeroed();
+                if sigwait(&mut set, &mut sig) != 0 {
+                    Err(Error::new(ErrorKind::Other, "couldn't sigwait"))?;
+                }
+
+                // unblock SIGUSR1
+                sigemptyset(&mut set);
+                sigprocmask(SIG_UNBLOCK, &mut set, ptr::null_mut());
+
+                let cstr_args: Vec<CString> = cli
+                    .cmd
+                    .iter()
+                    .map(|s| CString::new(s.as_str()).expect("NUL byte in argument"))
+                    .collect();
+
+                // build argv
+                let mut argv: Vec<*const c_char> = cstr_args.iter().map(|s| s.as_ptr()).collect();
+                argv.push(std::ptr::null());
+
+                let prog = &cstr_args[0];
+
+                match find_sudo_invoker() {
+                    Some((uid, gid)) => {
+                        let target_uid = Uid::from_raw(uid);
+                        let target_gid = Gid::from_raw(gid);
+                        setgroups(&[]).expect("setgroups");
+
+                        setresgid(target_gid, target_gid, target_gid).expect("setresgid");
+                        setresuid(target_uid, target_uid, target_uid).expect("setresuid");
+                    }
+                    None => {}
+                }
+
+                libc::execvp(prog.as_ptr(), argv.as_ptr());
+                libc::perror(b"execvp failed\0".as_ptr() as _);
+                libc::_exit(127);
+            }
+        }
+    } else {
+        target_pid = val;
+    }
     let pid_tgid = (target_pid as u64) << 32 | target_pid as u64;
 
     let cwd = std::env::current_dir()?;
@@ -170,6 +185,11 @@ fn main() -> Result<()> {
     let (sender, receiver) = mpsc::channel::<Option<SyscallEvent>>();
     let stream_handler = thread::spawn(move || event_stream_handler(receiver));
 
+    let monitor_pid_fd = if let Ok(fd) = monitor_pid(val) {
+        Some(fd)
+    } else {
+        None
+    };
     // setup ringbuf
     let rb_map = MapHandle::from_pinned_path("/sys/fs/bpf/hs_trace_output")?;
     let mut rb_builder = RingBufferBuilder::new();
@@ -243,12 +263,28 @@ fn main() -> Result<()> {
 
     // start the child
     unsafe {
-        kill(target_pid as i32, SIGUSR1);
+        if !attach_to_existing_proc {
+            kill(target_pid as i32, SIGUSR1);
+        }
     }
+
     while RUNNING.load(Ordering::Relaxed) {
         match rb.poll(Duration::from_micros(25)) {
             Ok(()) => {}
             Err(_) => {}
+        }
+        if let Some(fd) = monitor_pid_fd {
+            let mut pollfd = libc::pollfd {
+                fd: fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+
+            let ret = unsafe { libc::poll(&mut pollfd, 1, 0) };
+            if ret > 0 {
+                println!("Target process {} ended.", target_pid);
+                RUNNING.store(false, Ordering::Relaxed);
+            }
         }
 
         if let Some(count_per_cpu) = missed_events.lookup_percpu(&key, MapFlags::ANY)? {
