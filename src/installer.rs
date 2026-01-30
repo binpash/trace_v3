@@ -45,7 +45,7 @@ fn pin_map(name: &str, map: &MapImpl<'_>) -> Result<()> {
     Ok(())
 }
 
-fn main() -> Result<()> {
+pub fn installer() -> Result<()> {
     std::fs::create_dir_all(PIN_BASE)?;
 
     let skel_builder = HsTraceSkelBuilder::default();

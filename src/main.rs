@@ -1,32 +1,35 @@
 use anyhow::Result;
+use clap::Parser;
+use libbpf_rs::{MapCore, MapFlags, MapHandle, RingBufferBuilder};
 use libc::{
     c_int, kill, sigaction, sigaddset, sigemptyset, sighandler_t, sigprocmask, sigset_t, sigwait,
     waitpid, SA_NOCLDSTOP, SA_RESTART, SIGCHLD, SIGUSR1, SIG_BLOCK, SIG_UNBLOCK,
 };
+use nix::unistd::{setgroups, setresgid, setresuid, Gid, Uid};
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
 use std::mem::{size_of, zeroed, MaybeUninit};
 use std::os::raw::c_char;
-use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use std::{env, fs, ptr};
-// use clap::Parser;
-use libbpf_rs::{MapCore, MapFlags, MapHandle, RingBufferBuilder};
-use nix::unistd::{setgroups, setresgid, setresuid, Gid, Uid};
+use std::{env, ptr};
 // use plain::Plain;
 // use time::OffsetDateTime;
 // use time::macros::format_description;
 
-#[allow(clippy::wildcard_imports)]
-use trace_v3::*;
-
+mod cli;
 mod dep_tracer;
+mod installer;
+
+use crate::cli::{Cli, Commands, Outputs};
 use crate::dep_tracer::event_stream_handler;
 use crate::dep_tracer::SyscallEvent;
 use crate::dep_tracer::{CTXT, LOGS, SETS};
+use crate::installer::installer;
+use trace_v3::sys_enter_info_t;
+use trace_v3::sys_exit_info_t;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 static RUNNING: AtomicBool = AtomicBool::new(true);
@@ -34,6 +37,7 @@ static RUNNING: AtomicBool = AtomicBool::new(true);
 extern "C" fn sigchld_handler(_sig: i32) {
     RUNNING.store(false, Ordering::Relaxed);
 }
+
 fn find_sudo_invoker() -> Option<(u32, u32)> {
     let sudo = env::var("SUDO_UID").ok()?;
     let prev_uid: u32 = match sudo.trim().parse() {
@@ -48,9 +52,16 @@ fn find_sudo_invoker() -> Option<(u32, u32)> {
     };
     Some((prev_uid, prev_grp))
 }
-fn main() -> Result<()> {
-    let args = std::env::args();
 
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    if let Some(Commands::Install {}) = cli.command {
+        return installer();
+    }
+
+    let mut outputs = Outputs::from_cli(&cli)?;
+
+    // set up sighandler to detect when child terminates so we can reap
     unsafe {
         let mut sa: sigaction = zeroed();
         sa.sa_sigaction = sigchld_handler as *const () as sighandler_t;
@@ -91,13 +102,16 @@ fn main() -> Result<()> {
             sigemptyset(&mut set);
             sigprocmask(SIG_UNBLOCK, &mut set, ptr::null_mut());
 
-            let cstr_args: Vec<CString> = args
-                .skip(1)
-                .map(|s| CString::new(s.as_str()).expect("invalid C string"))
+            let cstr_args: Vec<CString> = cli
+                .cmd
+                .iter()
+                .map(|s| CString::new(s.as_str()).expect("NUL byte in argument"))
                 .collect();
 
+            // build argv
             let mut argv: Vec<*const c_char> = cstr_args.iter().map(|s| s.as_ptr()).collect();
             argv.push(std::ptr::null());
+
             let prog = &cstr_args[0];
 
             match find_sudo_invoker() {
@@ -113,6 +127,8 @@ fn main() -> Result<()> {
             }
 
             libc::execvp(prog.as_ptr(), argv.as_ptr());
+            libc::perror(b"execvp failed\0".as_ptr() as _);
+            libc::_exit(127);
         }
     }
 
@@ -140,22 +156,9 @@ fn main() -> Result<()> {
         }
     }
 
-    // let skel_builder = HsTraceSkelBuilder::default();
-    // // if opts.verbose {
-    // //     skel_builder.obj_builder.debug(true);
-    // // }
-    //
-    // let mut open_object = MaybeUninit::uninit();
-    // let open_skel = skel_builder.open(&mut open_object)?;
-    //
-    // // Begin tracing
-    // let mut skel = open_skel.load()?;
-    // skel.attach()?;
-
     // update the map
-    let runner_pid = unsafe { libc::getpid() };
-    println!("parent: {runner_pid} child: {target_pid}");
-    // TODO: check if native endianness is correct!
+    // let runner_pid = unsafe { libc::getpid() };
+    // println!("parent: {runner_pid} child: {target_pid}");
     let target_pid_buf = &target_pid.to_ne_bytes();
     let dummy_val: i32 = 1;
     let dummy_bytes = &dummy_val.to_ne_bytes();
@@ -232,14 +235,16 @@ fn main() -> Result<()> {
     let rb = rb_builder.build()?;
 
     let missed_events = MapHandle::from_pinned_path("/sys/fs/bpf/hs_trace_missed_events")?;
-    // start the child
-    unsafe {
-        kill(target_pid as i32, SIGUSR1);
-    }
+
     let key = 0u32.to_ne_bytes();
     let mut program_total = 0;
     let mut prev_missed = 0;
     let mut count = 0;
+
+    // start the child
+    unsafe {
+        kill(target_pid as i32, SIGUSR1);
+    }
     while RUNNING.load(Ordering::Relaxed) {
         match rb.poll(Duration::from_micros(25)) {
             Ok(()) => {}
@@ -273,10 +278,12 @@ fn main() -> Result<()> {
             prev_missed = total;
         };
     }
-    println!("{program_total} missed events during the duration of the program");
 
     let mut status = MaybeUninit::<c_int>::uninit();
     unsafe { if waitpid(target_pid, status.as_mut_ptr(), 0) != target_pid {} }
+
+    // remove pid from map
+    pid_set.lookup_and_delete(target_pid_buf)?;
 
     // send None to trigger thread to stop
     // TODO: handle all cases
@@ -287,27 +294,28 @@ fn main() -> Result<()> {
     let _ = stream_handler.join();
     // let ctxt = CTXT.lock().unwrap();
     let mut logs = LOGS.lock().unwrap();
-    logs.dump_log();
+    logs.dump_log(&mut outputs.trace_file)?;
 
     let mut sets = SETS.lock().unwrap();
-
-    sets.dump_sets();
+    sets.dump_sets(&mut outputs.dep_file)?;
     // ctxt.check_empty();
-    let potential_added_dirs = ["git", "temp"];
 
-    if cfg!(debug_assertions) {
-        for dir in potential_added_dirs {
-            let path = PathBuf::from(dir);
-            if path.is_dir() {
-                println!("Removing directory: {}", dir);
-                if let Err(e) = fs::remove_dir_all(path) {
-                    eprintln!("Failed to remove {}: {}", dir, e);
-                }
-            } else {
-                println!("No such directory: {}", dir);
-            }
-        }
-    }
+    // let potential_added_dirs = ["git", "temp"];
+    //
+    // if cfg!(debug_assertions) {
+    //     for dir in potential_added_dirs {
+    //         let path = PathBuf::from(dir);
+    //         if path.is_dir() {
+    //             println!("Removing directory: {}", dir);
+    //             if let Err(e) = fs::remove_dir_all(path) {
+    //                 eprintln!("Failed to remove {}: {}", dir, e);
+    //             }
+    //         } else {
+    //             println!("No such directory: {}", dir);
+    //         }
+    //     }
+    // }
+
     println!("{program_total} missed events during the duration of the program");
     Ok(())
 }

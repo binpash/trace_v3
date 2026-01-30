@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::fmt::Display;
 use std::path::{Component, PathBuf};
-use std::sync::Mutex;
 use std::sync::mpsc;
+use std::sync::Mutex;
 use syscallnrs::syscall_of_nr;
 use trace_v3::*;
 
@@ -94,17 +94,13 @@ impl Logs {
         }
     }
     pub fn update_log(&mut self, pid_tgid: u64, event: SyscallEvent) {
-        // if let SyscallEvent::Enter0(_) = event {
-        //     println!("EVENT");
-        //     println!("{event:#?}");
-        // }
         self.log
             .entry(pid_tgid)
             .or_insert_with(|| VecDeque::new())
             .push_back(event);
     }
 
-    pub fn dump_log(&mut self) {
+    pub fn dump_log(&mut self, mut out: impl std::io::Write) -> Result<()> {
         let mut sorted_logs: Vec<_> = self
             .log
             .iter()
@@ -114,11 +110,12 @@ impl Logs {
         sorted_logs.sort_by(|(pid1, _, _), (pid2, _, _)| pid1.cmp(pid2));
 
         for (pid, tid, log) in sorted_logs {
-            println!("log for pid {} tid {}:", pid, tid);
+            writeln!(out, "log for pid {} tid {}:", pid, tid)?;
             for e in log.iter() {
-                print!("{e}");
+                write!(out, "{e}")?;
             }
         }
+        Ok(())
     }
 }
 
@@ -415,22 +412,23 @@ impl RWSet {
         v
     }
 
-    pub fn dump_sets(&mut self) {
+    pub fn dump_sets(&mut self, mut out: impl std::io::Write) -> Result<()> {
         let rset = &self.read_set;
         let wset = &self.write_set;
-        println!("Read set");
+        writeln!(out, "Read set")?;
         let mut r = Vec::from_iter(rset);
         r.sort();
         for p in r {
-            println!("{p:?}")
+            writeln!(out, "{p:?}")?;
         }
 
-        println!("Write set");
+        writeln!(out, "Write set")?;
         let mut w = Vec::from_iter(wset);
         w.sort();
         for p in w {
-            println!("{p:?}")
+            writeln!(out, "{p:?}")?;
         }
+        Ok(())
     }
 }
 
