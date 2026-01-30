@@ -11,15 +11,11 @@ use std::ffi::CString;
 use std::io::{Error, ErrorKind};
 use std::mem::{size_of, zeroed, MaybeUninit};
 use std::os::raw::c_char;
+use std::os::unix::io::RawFd;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 use std::{env, ptr};
-// use plain::Plain;
-// use time::OffsetDateTime;
-// use time::macros::format_description;
-use clap::Parser;
-use std::os::unix::io::RawFd;
 
 mod cli;
 mod dep_tracer;
@@ -65,10 +61,78 @@ fn monitor_pid(pid: i32) -> std::io::Result<RawFd> {
     }
 }
 
+fn fork_child(cli: &Cli) -> Result<i32> {
+    let target_pid: i32;
+    unsafe {
+        target_pid = libc::fork();
+    }
+    if target_pid < 0 {
+        Err(Error::new(ErrorKind::Other, "couldn't fork"))?;
+    }
+    if target_pid == 0 {
+        unsafe {
+            let mut set: sigset_t = zeroed();
+
+            // block SIGUSR1, so it can become pending
+            sigemptyset(&mut set);
+            sigaddset(&mut set, SIGUSR1);
+            sigprocmask(SIG_BLOCK, &mut set, ptr::null_mut());
+
+            // wait on SIGUSR1
+            let mut sig = zeroed();
+            if sigwait(&mut set, &mut sig) != 0 {
+                Err(Error::new(ErrorKind::Other, "couldn't sigwait"))?;
+            }
+
+            // unblock SIGUSR1
+            sigemptyset(&mut set);
+            sigprocmask(SIG_UNBLOCK, &mut set, ptr::null_mut());
+
+            let cstr_args: Vec<CString> = cli
+                .cmd
+                .iter()
+                .map(|s| CString::new(s.as_str()).expect("NUL byte in argument"))
+                .collect();
+
+            // build argv
+            let mut argv: Vec<*const c_char> = cstr_args.iter().map(|s| s.as_ptr()).collect();
+            argv.push(std::ptr::null());
+
+            let prog = &cstr_args[0];
+
+            match find_sudo_invoker() {
+                Some((uid, gid)) => {
+                    let target_uid = Uid::from_raw(uid);
+                    let target_gid = Gid::from_raw(gid);
+                    setgroups(&[]).expect("setgroups");
+
+                    setresgid(target_gid, target_gid, target_gid).expect("setresgid");
+                    setresuid(target_uid, target_uid, target_uid).expect("setresuid");
+                }
+                None => {}
+            }
+
+            libc::execvp(prog.as_ptr(), argv.as_ptr());
+            libc::perror(b"execvp failed\0".as_ptr() as _);
+            libc::_exit(127);
+        }
+    }
+    Ok(target_pid)
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     if let Some(Commands::Install {}) = cli.command {
         return installer();
+    }
+
+    let mut target_pid = -1;
+    let attach_to_existing_proc: bool;
+    if let Some(Commands::Attach { pid }) = cli.command {
+        target_pid = pid;
+        attach_to_existing_proc = true;
+    } else {
+        attach_to_existing_proc = false;
     }
 
     let mut outputs = Outputs::from_cli(&cli)?;
@@ -88,65 +152,14 @@ fn main() -> Result<()> {
         }
     }
 
-    let target_pid;
+    // either trace the pid or fork the child
     if !attach_to_existing_proc {
-        unsafe {
-            target_pid = libc::fork();
+        match fork_child(&cli) {
+            Ok(pid) => target_pid = pid,
+            Err(e) => Err(e)?,
         }
-        if target_pid < 0 {
-            Err(Error::new(ErrorKind::Other, "couldn't fork"))?;
-        }
-        if target_pid == 0 {
-            unsafe {
-                let mut set: sigset_t = zeroed();
-
-                // block SIGUSR1, so it can become pending
-                sigemptyset(&mut set);
-                sigaddset(&mut set, SIGUSR1);
-                sigprocmask(SIG_BLOCK, &mut set, ptr::null_mut());
-
-                // wait on SIGUSR1
-                let mut sig = zeroed();
-                if sigwait(&mut set, &mut sig) != 0 {
-                    Err(Error::new(ErrorKind::Other, "couldn't sigwait"))?;
-                }
-
-                // unblock SIGUSR1
-                sigemptyset(&mut set);
-                sigprocmask(SIG_UNBLOCK, &mut set, ptr::null_mut());
-
-                let cstr_args: Vec<CString> = cli
-                    .cmd
-                    .iter()
-                    .map(|s| CString::new(s.as_str()).expect("NUL byte in argument"))
-                    .collect();
-
-                // build argv
-                let mut argv: Vec<*const c_char> = cstr_args.iter().map(|s| s.as_ptr()).collect();
-                argv.push(std::ptr::null());
-
-                let prog = &cstr_args[0];
-
-                match find_sudo_invoker() {
-                    Some((uid, gid)) => {
-                        let target_uid = Uid::from_raw(uid);
-                        let target_gid = Gid::from_raw(gid);
-                        setgroups(&[]).expect("setgroups");
-
-                        setresgid(target_gid, target_gid, target_gid).expect("setresgid");
-                        setresuid(target_uid, target_uid, target_uid).expect("setresuid");
-                    }
-                    None => {}
-                }
-
-                libc::execvp(prog.as_ptr(), argv.as_ptr());
-                libc::perror(b"execvp failed\0".as_ptr() as _);
-                libc::_exit(127);
-            }
-        }
-    } else {
-        target_pid = val;
     }
+
     let pid_tgid = (target_pid as u64) << 32 | target_pid as u64;
 
     let cwd = std::env::current_dir()?;
@@ -185,11 +198,12 @@ fn main() -> Result<()> {
     let (sender, receiver) = mpsc::channel::<Option<SyscallEvent>>();
     let stream_handler = thread::spawn(move || event_stream_handler(receiver));
 
-    let monitor_pid_fd = if let Ok(fd) = monitor_pid(val) {
+    let monitor_pid_fd = if let Ok(fd) = monitor_pid(target_pid) {
         Some(fd)
     } else {
         None
     };
+
     // setup ringbuf
     let rb_map = MapHandle::from_pinned_path("/sys/fs/bpf/hs_trace_output")?;
     let mut rb_builder = RingBufferBuilder::new();

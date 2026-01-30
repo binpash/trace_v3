@@ -1,10 +1,12 @@
 use clap::{Parser, Subcommand};
-
 use std::{
     fs::{self, File},
     io::{self, BufWriter, Write},
+    os::unix::fs::chown,
     path::Path,
 };
+
+use crate::find_sudo_invoker;
 
 #[derive(Parser, Debug)]
 #[command(name = "trace_v3", arg_required_else_help = true)]
@@ -17,13 +19,10 @@ pub struct Cli {
     #[arg(long, default_value = "-")]
     pub dep_file: String,
 
-    /// Attach to an existing process by PID
-    #[arg(short = 'p', long = "pid")]
-    pub pid: Option<i32>,
-
     #[command(subcommand)]
     pub command: Option<Commands>,
 
+    /// command to execute
     #[arg(trailing_var_arg = true)]
     pub cmd: Vec<String>,
 }
@@ -32,6 +31,8 @@ pub struct Cli {
 pub enum Commands {
     /// Install BPF programs and maps
     Install {},
+    /// Attach to an existing process by PID
+    Attach { pid: i32 },
 }
 
 pub type Output = Box<dyn Write + Send>;
@@ -51,30 +52,6 @@ impl Outputs {
 }
 
 /*
-
-
-    let mut attach_to_existing_proc = false;
-    let mut val: i32 = -1;
-    if let Some(pid) = check_flags.pid {
-        attach_to_existing_proc = true;
-        val = pid;
-    }
-
-        let (prev_uid, prev_grp) = find_sudo_invoker().unwrap();
-
-        // 1. Create a helper closure to apply ownership.
-        // This keeps the code clean and ensures we don't forget any file.
-        let set_owner = |path: &Path| {
-            chown(path, Some(prev_uid), Some(prev_grp))
-                .expect("Failed to change file ownership to non-sudo user");
-        };
-
-        let output_path = if let Some(p) = path {
-            p
-        } else {
-            get_default_output_path().join("output")
-        };
-
         // 2. Fix: Use create_dir_all so it doesn't crash if parents are missing.
         // We check !exists() to avoid overwriting permissions if it's already there (optional).
         if !output_path.exists() {
@@ -101,15 +78,23 @@ fn make_output(target: &str) -> io::Result<Output> {
     match target {
         "-" => Ok(Box::new(io::stdout())),
         path => {
+            let (uid, gid) = find_sudo_invoker().unwrap();
+            let set_owner = |path: &Path| {
+                chown(path, Some(uid), Some(gid))
+                    .expect("Failed to change file ownership to non-sudo user");
+            };
+
             let path = Path::new(path);
 
             if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() {
+                if !parent.exists() {
                     fs::create_dir_all(parent)?;
+                    set_owner(&parent);
                 }
             }
 
             let file = File::create(path)?;
+            set_owner(&path);
             Ok(Box::new(BufWriter::new(file)))
         }
     }

@@ -1,18 +1,11 @@
-use crate::find_sudo_invoker;
-use crate::hs_trace::types::path;
 use anyhow::Result;
-use libc::{self, FILE};
+use libc::{self};
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::Display;
-use std::fs::{self, File, ReadDir};
-use std::io::Write;
-use std::os::unix::fs::chown;
-use std::path::Path;
+use std::fmt;
 use std::path::{Component, PathBuf};
 use std::sync::mpsc;
 use std::sync::Mutex;
-use std::{env, fmt};
 use syscallnrs::syscall_of_nr;
 use trace_v3::*;
 
@@ -46,7 +39,7 @@ pub enum SyscallEvent {
         ret: i64,
     },
 }
-impl Display for SyscallEvent {
+impl fmt::Display for SyscallEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SyscallEvent::Enter {
@@ -126,10 +119,6 @@ impl Logs {
     }
 }
 
-fn get_default_output_path() -> PathBuf {
-    //must be run with cargo
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
 #[derive(Clone, Debug)]
 struct OpenFile {
     ref_cnt: u32,
