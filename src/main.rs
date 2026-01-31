@@ -5,7 +5,7 @@ use libc::{
     c_int, kill, sigaction, sigaddset, sigemptyset, sighandler_t, sigprocmask, sigset_t, sigwait,
     waitpid, SA_NOCLDSTOP, SA_RESTART, SIGCHLD, SIGUSR1, SIG_BLOCK, SIG_UNBLOCK,
 };
-use nix::unistd::{setgroups, setresgid, setresuid, Gid, Uid};
+use nix::unistd::{getgid, getuid, setgroups, setresgid, setresuid, Gid, Uid};
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
@@ -36,19 +36,16 @@ extern "C" fn sigchld_handler(_sig: i32) {
     RUNNING.store(false, Ordering::Relaxed);
 }
 
-fn find_sudo_invoker() -> Option<(u32, u32)> {
-    let sudo = env::var("SUDO_UID").ok()?;
-    let prev_uid: u32 = match sudo.trim().parse() {
-        Ok(num) => num,
-        Err(_) => 0,
+fn invoker_permissions() -> Result<(u32, u32)> {
+    let uid = match env::var("SUDO_UID").ok() {
+        Some(uid) => uid.parse()?,
+        None => getuid().as_raw(), // if invoking with setuid, use ruid
     };
-
-    let group = env::var("SUDO_GID").ok()?;
-    let prev_grp: u32 = match group.trim().parse() {
-        Ok(num) => num,
-        Err(_) => 0,
+    let gid = match env::var("SUDO_GID").ok() {
+        Some(gid) => gid.parse()?,
+        None => getgid().as_raw(), // if invoking with setuid, use rgid
     };
-    Some((prev_uid, prev_grp))
+    Ok((uid, gid))
 }
 
 fn monitor_pid(pid: i32) -> std::io::Result<RawFd> {
@@ -100,17 +97,12 @@ fn fork_child(cli: &Cli) -> Result<i32> {
 
             let prog = &cstr_args[0];
 
-            match find_sudo_invoker() {
-                Some((uid, gid)) => {
-                    let target_uid = Uid::from_raw(uid);
-                    let target_gid = Gid::from_raw(gid);
-                    setgroups(&[]).expect("setgroups");
-
-                    setresgid(target_gid, target_gid, target_gid).expect("setresgid");
-                    setresuid(target_uid, target_uid, target_uid).expect("setresuid");
-                }
-                None => {}
-            }
+            let (uid, gid) = invoker_permissions()?;
+            let target_uid = Uid::from_raw(uid);
+            let target_gid = Gid::from_raw(gid);
+            setgroups(&[]).expect("setgroups");
+            setresgid(target_gid, target_gid, target_gid).expect("setresgid");
+            setresuid(target_uid, target_uid, target_uid).expect("setresuid");
 
             libc::execvp(prog.as_ptr(), argv.as_ptr());
             libc::perror(b"execvp failed\0".as_ptr() as _);
@@ -125,6 +117,9 @@ fn main() -> Result<()> {
     if let Some(Commands::Install {}) = cli.command {
         return installer();
     }
+
+    // TODO: resolve the path of the executable before the fork
+    // throw every other call until the path appears
 
     let mut target_pid = -1;
     let attach_to_existing_proc: bool;
