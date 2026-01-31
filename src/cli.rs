@@ -1,13 +1,12 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::{
-    fs::{self, File},
+    fs::{self, OpenOptions},
     io::{self, BufWriter, Write},
-    os::unix::fs::chown,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
-use crate::invoker_permissions;
+use crate::utils::PrivGuard;
 
 #[derive(Parser, Debug)]
 #[command(name = "trace_v3", arg_required_else_help = true)]
@@ -56,12 +55,7 @@ fn make_output(target: &str) -> Result<Output> {
     match target {
         "-" => Ok(Box::new(io::stdout())),
         path => {
-            let (uid, gid) = invoker_permissions()?;
-
-            let set_owner = |path: &Path| {
-                chown(path, Some(uid), Some(gid))
-                    .expect("Failed to change file ownership to non-sudo user");
-            };
+            let _guard = PrivGuard::drop_to_user()?;
 
             let mut file_path = PathBuf::from(path);
 
@@ -70,14 +64,17 @@ fn make_output(target: &str) -> Result<Output> {
             }
 
             if let Some(parent) = file_path.parent() {
-                if !parent.exists() {
+                if !parent.as_os_str().is_empty() {
                     fs::create_dir_all(parent)?;
-                    set_owner(&parent);
                 }
             }
 
-            let file = File::create(&file_path)?;
-            set_owner(&file_path);
+            let file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&path)?;
+
             Ok(Box::new(BufWriter::new(file)))
         }
     }

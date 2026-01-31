@@ -5,27 +5,29 @@ use libc::{
     c_int, kill, sigaction, sigaddset, sigemptyset, sighandler_t, sigprocmask, sigset_t, sigwait,
     waitpid, SA_NOCLDSTOP, SA_RESTART, SIGCHLD, SIGUSR1, SIG_BLOCK, SIG_UNBLOCK,
 };
-use nix::unistd::{getgid, getuid, setgroups, setresgid, setresuid, Gid, Uid};
+use nix::unistd::{setgroups, setresgid, setresuid, Gid, Uid};
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
 use std::mem::{size_of, zeroed, MaybeUninit};
 use std::os::raw::c_char;
 use std::os::unix::io::RawFd;
+use std::ptr;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use std::{env, ptr};
 
 mod cli;
 mod dep_tracer;
 mod installer;
+mod utils;
 
 use crate::cli::{Cli, Commands, Outputs};
 use crate::dep_tracer::event_stream_handler;
 use crate::dep_tracer::SyscallEvent;
 use crate::dep_tracer::{CTXT, LOGS, SETS};
 use crate::installer::installer;
+use crate::utils::invoker_permissions;
 use trace_v3::sys_enter_info_t;
 use trace_v3::sys_exit_info_t;
 
@@ -34,18 +36,6 @@ static RUNNING: AtomicBool = AtomicBool::new(true);
 
 extern "C" fn sigchld_handler(_sig: i32) {
     RUNNING.store(false, Ordering::Relaxed);
-}
-
-fn invoker_permissions() -> Result<(u32, u32)> {
-    let uid = match env::var("SUDO_UID").ok() {
-        Some(uid) => uid.parse()?,
-        None => getuid().as_raw(), // if invoking with setuid, use ruid
-    };
-    let gid = match env::var("SUDO_GID").ok() {
-        Some(gid) => gid.parse()?,
-        None => getgid().as_raw(), // if invoking with setuid, use rgid
-    };
-    Ok((uid, gid))
 }
 
 fn monitor_pid(pid: i32) -> std::io::Result<RawFd> {
