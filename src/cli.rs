@@ -19,6 +19,10 @@ pub struct Cli {
     #[arg(long, default_value = "-")]
     pub dep_file: String,
 
+    /// Missed event count output file or "-" for stdout
+    #[arg(long, default_value = "-")]
+    pub missed_file: String,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 
@@ -40,6 +44,7 @@ pub type Output = Box<dyn Write + Send>;
 pub struct Outputs {
     pub trace_file: Output,
     pub dep_file: Output,
+    pub missed_file: Output,
 }
 
 impl Outputs {
@@ -47,6 +52,7 @@ impl Outputs {
         Ok(Self {
             trace_file: make_output(&cli.trace_file)?,
             dep_file: make_output(&cli.dep_file)?,
+            missed_file: make_output(&cli.missed_file)?,
         })
     }
 }

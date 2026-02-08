@@ -39,14 +39,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             arch
         }
     );
-
     let include_flag = format!("-I/usr/include/{}-linux-gnu", arch);
     SkeletonBuilder::new()
         .source("src/bpf/hs_trace.bpf.c")
         .debug(true)
         .clang("clang")
         .clang_args([
-            "-D __BPF_TRACING__",
+            "-D__BPF_TRACING__",
             &arch_flag,
             &target_arch_flag,
             "-Wall",

@@ -2,36 +2,59 @@
 
 #include "vmlinux.h"
 
-#include <asm/unistd.h>
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <linux/limits.h>
+#include <linux/unistd.h>
 
-struct {
+struct ringbuf {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
-	__uint(max_entries, 1024 * 1024 * BUFF_SIZE);
-} output SEC(".maps");
+	__uint(max_entries, 1024 * 1024 * RINGBUF_SIZE);
+};
 
 struct {
+	__uint(type, BPF_MAP_TYPE_HASH_OF_MAPS);
+	__uint(max_entries, RINGBUF_MAX_COUNT);
+	__type(key, u32);   // tracer_pid
+	__type(value, u32); // mapfd
+	__array(values, struct ringbuf);
+} ringbufs SEC(".maps");
+
+struct missed_event {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, 1);
 	__type(key, u32);
 	__type(value, u32);
-	__uint(max_entries, 1);
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH_OF_MAPS);
+	__uint(max_entries, RINGBUF_MAX_COUNT);
+	__type(key, u32);   // tracer_pid
+	__type(value, u32); // mapfd
+	__array(values, struct missed_event);
 } missed_events SEC(".maps");
 
 struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 1024);
+	__type(key, u32);   // pid
+	__type(value, u32); // tracer_pid
+} pid_set SEC(".maps");
+
+struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, 2);
 	__type(key, u32);
 	__type(value, char[PATH_MAX]);
-	__uint(max_entries, 2);
 } paths SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 1024 * 1024);
 	__type(key, u32);
 	__type(value, u64);
-	__uint(max_entries, 1024 * 1024);
 } pipe_tracker SEC(".maps");
 
 // struct {
@@ -47,13 +70,6 @@ struct {
 // 	__type(value, char[4096]);
 // 	__uint(max_entries, 256);
 // } write_path_set SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__type(key, u32);
-	__type(value, u32);
-	__uint(max_entries, 1024);
-} pid_set SEC(".maps");
 
 struct sys_enter_fcntl_args {
 	unsigned short common_type;
@@ -77,17 +93,26 @@ BPF_PROG(hs_trace_enter_fcntl)
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u32 pid = pid_tgid & 0xFFFFFFFF;
 
-	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
+	u32 *tracer_pid = bpf_map_lookup_elem(&pid_set, &pid);
+	if (tracer_pid == NULL) {
+		return 0;
+	}
+	void *ringbuf = bpf_map_lookup_elem(&ringbufs, tracer_pid);
+	if (ringbuf == NULL) {
+		return 0;
+	}
+	void *missed_event = bpf_map_lookup_elem(&missed_events, tracer_pid);
+	if (missed_event == NULL) {
 		return 0;
 	}
 
 	struct sys_enter_info_t enter_fcntl;
 	struct bpf_dynptr ptr;
 
-	if (bpf_ringbuf_reserve_dynptr(&output, sizeof(struct sys_enter_info_t),
+	if (bpf_ringbuf_reserve_dynptr(ringbuf, sizeof(struct sys_enter_info_t),
 	                               0, &ptr) < 0) {
 		u32 key = 0;
-		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		u32 *missed = bpf_map_lookup_elem(missed_event, &key);
 		if (missed) {
 			__sync_fetch_and_add(missed, 1);
 		}
@@ -133,7 +158,16 @@ BPF_PROG(hs_trace_enter_memfd_create)
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u32 pid = pid_tgid & 0xFFFFFFFF;
 
-	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
+	u32 *tracer_pid = bpf_map_lookup_elem(&pid_set, &pid);
+	if (tracer_pid == NULL) {
+		return 0;
+	}
+	void *ringbuf = bpf_map_lookup_elem(&ringbufs, tracer_pid);
+	if (ringbuf == NULL) {
+		return 0;
+	}
+	void *missed_event = bpf_map_lookup_elem(&missed_events, tracer_pid);
+	if (missed_event == NULL) {
 		return 0;
 	}
 
@@ -156,9 +190,9 @@ BPF_PROG(hs_trace_enter_memfd_create)
 	struct bpf_dynptr ptr;
 
 	if (bpf_ringbuf_reserve_dynptr(
-		&output, sizeof(struct sys_enter_info_t) + len1, 0, &ptr) < 0) {
+		ringbuf, sizeof(struct sys_enter_info_t) + len1, 0, &ptr) < 0) {
 		u32 key = 0;
-		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		u32 *missed = bpf_map_lookup_elem(missed_event, &key);
 		if (missed) {
 			__sync_fetch_and_add(missed, 1);
 		}
@@ -202,6 +236,7 @@ SEC("tracepoint/syscalls/sys_enter_pipe2")
 int
 BPF_PROG(hs_trace_create_pipe)
 {
+
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u32 pid = pid_tgid & 0xFFFFFFFF;
 
@@ -235,10 +270,20 @@ BPF_PROG(hs_trace_create_pipe_exit)
 {
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u32 pid = pid_tgid & 0xFFFFFFFF;
-	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
-		// //bpf_printk("pid %d is not in set\n", pid);
+
+	u32 *tracer_pid = bpf_map_lookup_elem(&pid_set, &pid);
+	if (tracer_pid == NULL) {
 		return 0;
 	}
+	void *ringbuf = bpf_map_lookup_elem(&ringbufs, tracer_pid);
+	if (ringbuf == NULL) {
+		return 0;
+	}
+	void *missed_event = bpf_map_lookup_elem(&missed_events, tracer_pid);
+	if (missed_event == NULL) {
+		return 0;
+	}
+
 	if (((struct sys_exit_pipe2_args *)ctx)->ret < 0) {
 		return 0;
 	}
@@ -254,7 +299,7 @@ BPF_PROG(hs_trace_create_pipe_exit)
 	bpf_map_delete_elem(&pipe_tracker, &pid);
 
 	// Get inode for pseudo filename
-	// bpf_rcu_read_lock();
+	bpf_rcu_read_lock();
 
 	struct task_struct *t = (void *)bpf_get_current_task_btf();
 	struct files_struct *files = BPF_CORE_READ(t, files);
@@ -272,7 +317,7 @@ BPF_PROG(hs_trace_create_pipe_exit)
 	u64 ino = 0;
 	ino = BPF_CORE_READ(file0, f_inode, i_ino);
 
-	// bpf_rcu_read_unlock();
+	bpf_rcu_read_unlock();
 
 	u32 key0 = 0;
 
@@ -291,14 +336,14 @@ BPF_PROG(hs_trace_create_pipe_exit)
 	struct bpf_dynptr ptr;
 
 	if (bpf_ringbuf_reserve_dynptr(
-		&output, sizeof(struct sys_enter_info_t) + 2 * len1, 0, &ptr) <
+		ringbuf, sizeof(struct sys_enter_info_t) + 2 * len1, 0, &ptr) <
 	    0) {
 		// //bpf_printk("FAILED to reserve space in ring buffer
 		// for "
 		//            "event_type == "
 		//            "ENTER_PATH2\n");
 		u32 key = 0;
-		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		u32 *missed = bpf_map_lookup_elem(missed_event, &key);
 		if (missed) {
 			__sync_fetch_and_add(missed, 1);
 		}
@@ -328,13 +373,13 @@ BPF_PROG(hs_trace_create_pipe_exit)
 	bpf_ringbuf_submit_dynptr(&ptr, 0);
 
 	struct sys_exit_info_t exit;
-	if (bpf_ringbuf_reserve_dynptr(&output, sizeof(struct sys_exit_info_t),
+	if (bpf_ringbuf_reserve_dynptr(ringbuf, sizeof(struct sys_exit_info_t),
 	                               0, &ptr) < 0) {
 		// //bpf_printk(
 		//     "FAILED to reserve space in ring buffer for event_type ==
 		//     " "SYS_EXIT\n");
 		u32 key = 0;
-		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		u32 *missed = bpf_map_lookup_elem(missed_event, &key);
 		if (missed) {
 			__sync_fetch_and_add(missed, 1);
 		}
@@ -372,11 +417,12 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 	// //bpf_printk("sched_process_fork called with parent %d and child
 	// %d\n",
 	//            p_pid, c_pid);
-	if (bpf_map_lookup_elem(&pid_set, &p_pid) == NULL) {
-		// //bpf_printk("parent pid %d not in set\n", p_pid);
+	u32 *tracer_pid_for_parent = bpf_map_lookup_elem(&pid_set, &p_pid);
+	if (tracer_pid_for_parent == NULL) {
 		return 0;
 	}
-	if (bpf_map_update_elem(&pid_set, &c_pid, &dummy_val, BPF_ANY) < 0) {
+	if (bpf_map_update_elem(&pid_set, &c_pid, tracer_pid_for_parent,
+	                        BPF_ANY) < 0) {
 		// bpf_printk("failed to update pid set with %d\n", c_pid);
 		return 0;
 	}
@@ -384,16 +430,26 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 	           p_pid, c_pid);
 	// bpf_printk("update pid set with %d\n", c_pid);
 
+	void *ringbuf = bpf_map_lookup_elem(&ringbufs, tracer_pid_for_parent);
+	if (ringbuf == NULL) {
+		return 0;
+	}
+	void *missed_event =
+	    bpf_map_lookup_elem(&missed_events, tracer_pid_for_parent);
+	if (missed_event == NULL) {
+		return 0;
+	}
+
 	struct sys_enter_info_t enter0;
 	struct bpf_dynptr ptr;
 
-	if (bpf_ringbuf_reserve_dynptr(&output, sizeof(struct sys_enter_info_t),
+	if (bpf_ringbuf_reserve_dynptr(ringbuf, sizeof(struct sys_enter_info_t),
 	                               0, &ptr) < 0) {
 		// //bpf_printk(
 		//     "FAILED to reserve space in ring buffer for event_type ==
 		//     " "SYS_ENTER0\n");
 		u32 key = 0;
-		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		u32 *missed = bpf_map_lookup_elem(missed_event, &key);
 		if (missed) {
 			__sync_fetch_and_add(missed, 1);
 		}
@@ -418,13 +474,13 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 	bpf_ringbuf_submit_dynptr(&ptr, 0);
 
 	struct sys_exit_info_t exit;
-	if (bpf_ringbuf_reserve_dynptr(&output, sizeof(struct sys_exit_info_t),
+	if (bpf_ringbuf_reserve_dynptr(ringbuf, sizeof(struct sys_exit_info_t),
 	                               0, &ptr) < 0) {
 		// //bpf_printk(
 		//     "FAILED to reserve space in ring buffer for event_type ==
 		//     " "SYS_EXIT\n");
 		u32 key = 0;
-		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		u32 *missed = bpf_map_lookup_elem(missed_event, &key);
 		if (missed) {
 			__sync_fetch_and_add(missed, 1);
 		}
@@ -463,8 +519,17 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 {
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u32 pid = pid_tgid & 0xFFFFFFFF;
-	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
-		// //bpf_printk("pid %d is not in set\n", pid);
+
+	u32 *tracer_pid = bpf_map_lookup_elem(&pid_set, &pid);
+	if (tracer_pid == NULL) {
+		return 0;
+	}
+	void *ringbuf = bpf_map_lookup_elem(&ringbufs, tracer_pid);
+	if (ringbuf == NULL) {
+		return 0;
+	}
+	void *missed_event = bpf_map_lookup_elem(&missed_events, tracer_pid);
+	if (missed_event == NULL) {
 		return 0;
 	}
 
@@ -597,15 +662,15 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 // 		event_type = ENTER_PATH1;
 // 		break;
 // #endif
-#ifdef __NR_fcntl
-	case __NR_fcntl:
-		// TODO: COMPLETE
-		fd = (int)PT_REGS_PARM1_CORE(regs);
-		flags = (unsigned int)PT_REGS_PARM2_CORE(regs);
-		arg = PT_REGS_PARM3_CORE(regs);
-		event_type = ENTER_FCNTL;
-		break;
-#endif
+// #ifdef __NR_fcntl
+// 	case __NR_fcntl:
+// 		// TODO: COMPLETE
+// 		fd = (int)PT_REGS_PARM1_CORE(regs);
+// 		flags = (unsigned int)PT_REGS_PARM2_CORE(regs);
+// 		arg = PT_REGS_PARM3_CORE(regs);
+// 		event_type = ENTER_FCNTL;
+// 		break;
+// #endif
 #ifdef __NR_execve
 	case __NR_execve: /* r_first_path_set */
 #endif
@@ -635,6 +700,8 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		break;
 #ifdef __NR_truncate
 	case __NR_truncate: /* w_first_path_set */
+#endif
+#ifdef __NR_clone3
 #endif
 #ifdef __NR_acct
 	case __NR_acct:
@@ -785,12 +852,12 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	len2 &= (PATH_MAX - 1);
 
 	if (bpf_ringbuf_reserve_dynptr(
-		&output, sizeof(struct sys_enter_info_t) + len1 + len2, 0,
+		ringbuf, sizeof(struct sys_enter_info_t) + len1 + len2, 0,
 		&ptr) < 0) {
 		// bpf_printk("FAILED to reserve space in ring buffer for all "
 		//            "other syscalls\n");
 		u32 key = 0;
-		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		u32 *missed = bpf_map_lookup_elem(missed_event, &key);
 		if (missed) {
 			__sync_fetch_and_add(missed, 1);
 		}
@@ -841,9 +908,20 @@ BPF_PROG(hs_trace_sys_exit)
 {
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u32 pid = pid_tgid & 0xFFFFFFFF;
-	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
+
+	u32 *tracer_pid = bpf_map_lookup_elem(&pid_set, &pid);
+	if (tracer_pid == NULL) {
 		return 0;
 	}
+	void *ringbuf = bpf_map_lookup_elem(&ringbufs, tracer_pid);
+	if (ringbuf == NULL) {
+		return 0;
+	}
+	void *missed_event = bpf_map_lookup_elem(&missed_events, tracer_pid);
+	if (missed_event == NULL) {
+		return 0;
+	}
+
 	long syscall_id = ((struct sys_exit_args *)ctx)->id;
 
 	// //bpf_printk("sys_exit event for syscall %ld\n", syscall_id);
@@ -1021,13 +1099,13 @@ BPF_PROG(hs_trace_sys_exit)
 	struct sys_exit_info_t exit;
 	struct bpf_dynptr ptr;
 
-	if (bpf_ringbuf_reserve_dynptr(&output, sizeof(struct sys_exit_info_t),
+	if (bpf_ringbuf_reserve_dynptr(ringbuf, sizeof(struct sys_exit_info_t),
 	                               0, &ptr) < 0) {
 		// //bpf_printk(
 		//     "FAILED to reserve space in ring buffer for event_type ==
 		//     " "SYS_EXIT\n");
 		u32 key = 0;
-		u32 *missed = bpf_map_lookup_elem(&missed_events, &key);
+		u32 *missed = bpf_map_lookup_elem(missed_event, &key);
 		if (missed) {
 			__sync_fetch_and_add(missed, 1);
 		}

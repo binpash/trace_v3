@@ -47,26 +47,26 @@ impl fmt::Display for SyscallEvent {
                 syscall_nr,
                 event_type: _,
                 flags,
-                cmd: _,
-                arg: _,
+                cmd,
+                arg,
                 fd,
                 fd2,
                 path1,
                 path2,
             } => {
-                write!(
-                    f,
-                    "{}(fd={},path={},fd2={},path2={},flags={})",
-                    match syscall_of_nr(*syscall_nr as u64) {
-                        Some(syscall) => syscall,
-                        None => "syscall_nr not found",
-                    },
-                    fd,
-                    path1,
-                    fd2,
-                    path2,
-                    flags
-                )
+                let syscall = match syscall_of_nr(*syscall_nr as u64) {
+                    Some(syscall) => syscall,
+                    None => "syscall_nr not found",
+                };
+                if syscall == "fcntl" {
+                    write!(f, "{}(fd={},cmd={},arg={})", syscall, fd, cmd, arg)
+                } else {
+                    write!(
+                        f,
+                        "{}(fd={},path={},fd2={},path2={},flags={})",
+                        syscall, fd, path1, fd2, path2, flags
+                    )
+                }
             }
             SyscallEvent::Exit { pid_tgid: _, ret } => {
                 writeln!(f, " -> {}", ret)

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use libbpf_rs::{MapCore, MapFlags, MapHandle, RingBufferBuilder};
+use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
 use libc::{
     c_int, kill, sigaction, sigaddset, sigemptyset, sighandler_t, sigprocmask, sigset_t, sigwait,
     waitpid, SA_NOCLDSTOP, SA_RESTART, SIGCHLD, SIGUSR1, SIG_BLOCK, SIG_UNBLOCK,
@@ -26,7 +26,7 @@ use crate::cli::{Cli, Commands, Outputs};
 use crate::dep_tracer::event_stream_handler;
 use crate::dep_tracer::SyscallEvent;
 use crate::dep_tracer::{CTXT, LOGS, SETS};
-use crate::installer::installer;
+use crate::installer::{installer, Tracer};
 use crate::utils::invoker_permissions;
 use trace_v3::sys_enter_info_t;
 use trace_v3::sys_exit_info_t;
@@ -49,14 +49,14 @@ fn monitor_pid(pid: i32) -> std::io::Result<RawFd> {
 }
 
 fn fork_child(cli: &Cli) -> Result<i32> {
-    let target_pid: i32;
+    let tracee_pid: i32;
     unsafe {
-        target_pid = libc::fork();
+        tracee_pid = libc::fork();
     }
-    if target_pid < 0 {
+    if tracee_pid < 0 {
         Err(Error::new(ErrorKind::Other, "couldn't fork"))?;
     }
-    if target_pid == 0 {
+    if tracee_pid == 0 {
         unsafe {
             let mut set: sigset_t = zeroed();
 
@@ -99,7 +99,7 @@ fn fork_child(cli: &Cli) -> Result<i32> {
             libc::_exit(127);
         }
     }
-    Ok(target_pid)
+    Ok(tracee_pid)
 }
 
 fn main() -> Result<()> {
@@ -111,10 +111,10 @@ fn main() -> Result<()> {
     // TODO: resolve the path of the executable before the fork
     // throw every other call until the path appears
 
-    let mut target_pid = -1;
+    let mut tracee_pid = -1;
     let attach_to_existing_proc: bool;
     if let Some(Commands::Attach { pid }) = cli.command {
-        target_pid = pid;
+        tracee_pid = pid;
         attach_to_existing_proc = true;
     } else {
         attach_to_existing_proc = false;
@@ -140,12 +140,12 @@ fn main() -> Result<()> {
     // either trace the pid or fork the child
     if !attach_to_existing_proc {
         match fork_child(&cli) {
-            Ok(pid) => target_pid = pid,
+            Ok(pid) => tracee_pid = pid,
             Err(e) => Err(e)?,
         }
     }
 
-    let pid_tgid = (target_pid as u64) << 32 | target_pid as u64;
+    let pid_tgid = (tracee_pid as u64) << 32 | tracee_pid as u64;
 
     let cwd = std::env::current_dir()?;
     // NOTE: map for userspace
@@ -156,11 +156,11 @@ fn main() -> Result<()> {
         ctxt.init_pid(pid_tgid, cwd.clone());
         // Also initialize with just the pid (lower 32 bits) since some events might use that
         // ctxt.init_pid(target_pid as u64, cwd.clone());
-        for entry in std::fs::read_dir(format!("/proc/{target_pid}/fd"))? {
+        for entry in std::fs::read_dir(format!("/proc/{tracee_pid}/fd"))? {
             let entry = entry?;
             let fd: i32 = entry.file_name().to_string_lossy().parse().unwrap();
             let path = std::fs::read_link(entry.path())?;
-            let fdinfo = std::fs::read_to_string(format!("/proc/{target_pid}/fdinfo/{fd}"))?;
+            let fdinfo = std::fs::read_to_string(format!("/proc/{tracee_pid}/fdinfo/{fd}"))?;
             let start = fdinfo.find("flags:").unwrap() + 6;
             let end = start + fdinfo[start..].find('\n').unwrap();
             let status_flags = fdinfo[start..end].trim().parse::<u32>()?;
@@ -169,30 +169,31 @@ fn main() -> Result<()> {
         }
     }
 
-    // update the map
-    // let runner_pid = unsafe { libc::getpid() };
-    // println!("parent: {runner_pid} child: {target_pid}");
-    let target_pid_buf = &target_pid.to_ne_bytes();
-    let dummy_val: i32 = 1;
-    let dummy_bytes = &dummy_val.to_ne_bytes();
+    // Initialize the Tracer
+    let tracer_pid = unsafe { libc::getpid() };
+    let tracer_pid_buf = &tracer_pid.to_ne_bytes();
+    let tracer = Tracer::new(tracer_pid)?;
 
-    let pid_set = MapHandle::from_pinned_path("/sys/fs/bpf/hs_trace_pid_set")?;
-    pid_set.update(target_pid_buf, dummy_bytes, MapFlags::ANY)?;
+    // update the pid_set for tracer
+    let tracee_pid_buf = &tracee_pid.to_ne_bytes();
+
+    tracer
+        .pid_set
+        .update(tracee_pid_buf, tracer_pid_buf, MapFlags::ANY)?;
 
     // create channel and spawn worker thread
     let (sender, receiver) = mpsc::channel::<Option<SyscallEvent>>();
     let stream_handler = thread::spawn(move || event_stream_handler(receiver));
 
-    let monitor_pid_fd = if let Ok(fd) = monitor_pid(target_pid) {
+    let monitor_pid_fd = if let Ok(fd) = monitor_pid(tracee_pid) {
         Some(fd)
     } else {
         None
     };
 
     // setup ringbuf
-    let rb_map = MapHandle::from_pinned_path("/sys/fs/bpf/hs_trace_output")?;
     let mut rb_builder = RingBufferBuilder::new();
-    rb_builder.add(&rb_map, |data| {
+    rb_builder.add(&tracer.ringbuf, |data| {
         // println!("received {} bytes", data.len());
         let event = if data.len() == size_of::<sys_exit_info_t>() {
             let header = unsafe { &*data.as_ptr().cast::<sys_exit_info_t>() };
@@ -253,17 +254,22 @@ fn main() -> Result<()> {
     })?;
     let rb = rb_builder.build()?;
 
-    let missed_events = MapHandle::from_pinned_path("/sys/fs/bpf/hs_trace_missed_events")?;
-
     let key = 0u32.to_ne_bytes();
     let mut program_total = 0;
     let mut prev_missed = 0;
     let mut count = 0;
 
+    // let num_cpus = libbpf_rs::num_possible_cpus()?;
+    // let zero_init = vec![vec![0u8; 4]; num_cpus];
+    //
+    // tracer
+    //     .missed
+    //     .update_percpu(&key, &zero_init, MapFlags::ANY)?;
+
     // start the child
     unsafe {
         if !attach_to_existing_proc {
-            kill(target_pid as i32, SIGUSR1);
+            kill(tracee_pid as i32, SIGUSR1);
         }
     }
 
@@ -281,12 +287,12 @@ fn main() -> Result<()> {
 
             let ret = unsafe { libc::poll(&mut pollfd, 1, 0) };
             if ret > 0 {
-                println!("Target process {} ended.", target_pid);
+                println!("Target process {} ended.", tracee_pid);
                 RUNNING.store(false, Ordering::Relaxed);
             }
         }
 
-        if let Some(count_per_cpu) = missed_events.lookup_percpu(&key, MapFlags::ANY)? {
+        if let Some(count_per_cpu) = tracer.missed.lookup_percpu(&key, MapFlags::ANY)? {
             let mut total = 0;
 
             for missed in count_per_cpu {
@@ -315,10 +321,10 @@ fn main() -> Result<()> {
     }
 
     let mut status = MaybeUninit::<c_int>::uninit();
-    unsafe { if waitpid(target_pid, status.as_mut_ptr(), 0) != target_pid {} }
+    unsafe { if waitpid(tracee_pid, status.as_mut_ptr(), 0) != tracee_pid {} }
 
     // remove pid from map
-    pid_set.lookup_and_delete(target_pid_buf)?;
+    tracer.pid_set.lookup_and_delete(tracee_pid_buf)?;
 
     // send None to trigger thread to stop
     // TODO: handle all cases
@@ -327,30 +333,21 @@ fn main() -> Result<()> {
         Err(_) => {}
     }
     let _ = stream_handler.join();
-    // let ctxt = CTXT.lock().unwrap();
-    let mut logs = LOGS.lock().unwrap();
-    logs.dump_log(&mut outputs.trace_file)?;
 
-    let mut sets = SETS.lock().unwrap();
-    sets.dump_sets(&mut outputs.dep_file)?;
+    {
+        let mut logs = LOGS.lock().unwrap();
+        logs.dump_log(&mut outputs.trace_file)?;
+    }
+    {
+        let mut sets = SETS.lock().unwrap();
+        sets.dump_sets(&mut outputs.dep_file)?;
+    }
     // ctxt.check_empty();
 
-    // let potential_added_dirs = ["git", "temp"];
-    //
-    // if cfg!(debug_assertions) {
-    //     for dir in potential_added_dirs {
-    //         let path = PathBuf::from(dir);
-    //         if path.is_dir() {
-    //             println!("Removing directory: {}", dir);
-    //             if let Err(e) = fs::remove_dir_all(path) {
-    //                 eprintln!("Failed to remove {}: {}", dir, e);
-    //             }
-    //         } else {
-    //             println!("No such directory: {}", dir);
-    //         }
-    //     }
-    // }
-
-    println!("{program_total} missed events during the duration of the program");
+    if cli.missed_file == "-" {
+        writeln!(&mut outputs.missed_file, "missed {program_total} events")?;
+    } else {
+        writeln!(&mut outputs.missed_file, "{program_total}")?;
+    }
     Ok(())
 }

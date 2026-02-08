@@ -1,8 +1,12 @@
 #ifndef _HS_TRACE_H_
 #define _HS_TRACE_H_
 
-#ifndef BUFF_SIZE
-#define BUFF_SIZE 4
+#ifndef RINGBUF_SIZE
+#define RINGBUF_SIZE 4
+#endif
+
+#ifndef RINGBUF_MAX_COUNT
+#define RINGBUF_MAX_COUNT 16
 #endif
 
 struct unique_file_t {
