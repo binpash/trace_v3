@@ -22,7 +22,7 @@ mod dep_tracer;
 mod installer;
 mod utils;
 
-use crate::cli::{Cli, Commands, Outputs};
+use crate::cli::{Cli, Commands, Outputs, StreamOutputs, OutputMode};
 use crate::dep_tracer::event_stream_handler;
 use crate::dep_tracer::SyscallEvent;
 use crate::dep_tracer::{CTXT, LOGS, SETS};
@@ -119,9 +119,18 @@ fn main() -> Result<()> {
     } else {
         attach_to_existing_proc = false;
     }
-
+    
     let mut outputs = Outputs::from_cli(&cli)?;
-
+    let stream_cfg= if matches!(cli.mode, OutputMode::Stream | OutputMode::Both) {
+        let so = StreamOutputs::from_cli(&cli)?;
+        Some(dep_tracer::StreamCfg {
+            read_out: if cli.stream_read { Some(so.read) } else { None },
+            write_out: if cli.stream_write { Some(so.write) } else { None },
+            trace_out: if cli.stream_trace { Some(so.deps) } else { None },
+            })
+    } else {
+        None
+    };
     // set up sighandler to detect when child terminates so we can reap
     unsafe {
         let mut sa: sigaction = zeroed();
@@ -183,7 +192,7 @@ fn main() -> Result<()> {
 
     // create channel and spawn worker thread
     let (sender, receiver) = mpsc::channel::<Option<SyscallEvent>>();
-    let stream_handler = thread::spawn(move || event_stream_handler(receiver));
+    let stream_handler = thread::spawn(move || event_stream_handler(receiver, stream_cfg));
 
     let monitor_pid_fd = if let Ok(fd) = monitor_pid(tracee_pid) {
         Some(fd)
@@ -333,14 +342,15 @@ fn main() -> Result<()> {
         Err(_) => {}
     }
     let _ = stream_handler.join();
-
-    {
-        let mut logs = LOGS.lock().unwrap();
-        logs.dump_log(&mut outputs.trace_file)?;
-    }
-    {
-        let mut sets = SETS.lock().unwrap();
-        sets.dump_sets(&mut outputs.dep_file)?;
+    if matches!(cli.mode, OutputMode::Summary | OutputMode::Both) {
+        {
+            let mut logs = LOGS.lock().unwrap();
+            logs.dump_log(&mut outputs.trace_file)?;
+        }
+        {
+            let mut sets = SETS.lock().unwrap();
+            sets.dump_sets(&mut outputs.dep_file)?;
+        }
     }
     // ctxt.check_empty();
 

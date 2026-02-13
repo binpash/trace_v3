@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::{
     fs::{self, OpenOptions},
     io::{self, BufWriter, Write},
@@ -7,6 +7,17 @@ use std::{
 };
 
 use crate::utils::PrivGuard;
+
+
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum OutputMode {
+    Summary,
+    Stream,
+    Both,
+}
+
+
 
 #[derive(Parser, Debug)]
 #[command(name = "trace_v3", arg_required_else_help = true)]
@@ -22,6 +33,34 @@ pub struct Cli {
     /// Missed event count output file or "-" for stdout
     #[arg(long, default_value = "-")]
     pub missed_file: String,
+
+    /// Output mode: summary (default), stream, or both
+    #[arg(long, value_enum, default_value = "summary")]
+    pub mode: OutputMode,
+
+    /// Enable streaming of READ events ("R <path>")
+    #[arg(long)]
+    pub stream_read: bool,
+
+    /// Where to write streamed READ events, or "-" for stdout
+    #[arg(long, default_value = "-")]
+    pub stream_read_file: String,
+
+    /// Enable streaming of WRITE events ("W <path>")
+    #[arg(long)]
+    pub stream_write: bool,
+
+    /// Where to write streamed WRITE events, or "-" for stdout
+    #[arg(long, default_value = "-")]
+    pub stream_write_file: String,
+
+    /// Enable streaming of dependency events (separate stream if desired)
+    #[arg(long)]
+    pub stream_trace: bool,
+
+    /// Where to write streamed dependency events, or "-" for stdout
+    #[arg(long, default_value = "-")]
+    pub stream_trace_file: String,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -39,8 +78,23 @@ pub enum Commands {
     Attach { pid: i32 },
 }
 
+
 pub type Output = Box<dyn Write + Send>;
 
+pub struct StreamOutputs {
+    pub read: Output,
+    pub write: Output,
+    pub deps: Output,
+}
+impl StreamOutputs {
+    pub fn from_cli(cli: &Cli) -> Result<Self> {
+        Ok(Self {
+            read: make_output(&cli.stream_read_file)?,
+            write: make_output(&cli.stream_write_file)?,
+            deps: make_output(&cli.stream_trace_file)?,
+        })
+    }
+}
 pub struct Outputs {
     pub trace_file: Output,
     pub dep_file: Output,
@@ -53,6 +107,7 @@ impl Outputs {
             trace_file: make_output(&cli.trace_file)?,
             dep_file: make_output(&cli.dep_file)?,
             missed_file: make_output(&cli.missed_file)?,
+            
         })
     }
 }
