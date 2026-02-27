@@ -3,7 +3,7 @@ use clap::Parser;
 use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
 use libc::{
     c_int, kill, sigaction, sigaddset, sigemptyset, sighandler_t, sigprocmask, sigset_t, sigwait,
-    waitpid, SA_NOCLDSTOP, SA_RESTART, SIGCHLD, SIGUSR1, SIG_BLOCK, SIG_UNBLOCK,
+    waitpid, SA_NOCLDSTOP, SA_RESTART, SIGCHLD, SIGINT, SIGUSR1, SIG_BLOCK, SIG_UNBLOCK,
 };
 use nix::unistd::{setgroups, setresgid, setresuid, Gid, Uid};
 use std::ffi::CStr;
@@ -22,7 +22,7 @@ mod dep_tracer;
 mod installer;
 mod utils;
 
-use crate::cli::{Cli, Commands, Outputs, StreamOutputs, OutputMode};
+use crate::cli::{Cli, Commands, OutputMode, Outputs, StreamOutputs};
 use crate::dep_tracer::event_stream_handler;
 use crate::dep_tracer::SyscallEvent;
 use crate::dep_tracer::{CTXT, LOGS, SETS};
@@ -35,6 +35,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
 extern "C" fn sigchld_handler(_sig: i32) {
+    RUNNING.store(false, Ordering::Relaxed);
+}
+
+extern "C" fn sigint_handler(_sig: i32) {
     RUNNING.store(false, Ordering::Relaxed);
 }
 
@@ -119,15 +123,23 @@ fn main() -> Result<()> {
     } else {
         attach_to_existing_proc = false;
     }
-    
+
     let mut outputs = Outputs::from_cli(&cli)?;
-    let stream_cfg= if matches!(cli.mode, OutputMode::Stream | OutputMode::Both) {
+    let stream_cfg = if matches!(cli.mode, OutputMode::Stream | OutputMode::Both) {
         let so = StreamOutputs::from_cli(&cli)?;
         Some(dep_tracer::StreamCfg {
             read_out: if cli.stream_read { Some(so.read) } else { None },
-            write_out: if cli.stream_write { Some(so.write) } else { None },
-            trace_out: if cli.stream_trace { Some(so.deps) } else { None },
-            })
+            write_out: if cli.stream_write {
+                Some(so.write)
+            } else {
+                None
+            },
+            trace_out: if cli.stream_trace {
+                Some(so.deps)
+            } else {
+                None
+            },
+        })
     } else {
         None
     };
@@ -143,6 +155,17 @@ fn main() -> Result<()> {
                 ErrorKind::Other,
                 "couldn't register sigchld handler",
             ))?;
+        }
+
+        sa.sa_sigaction = sigint_handler as *const () as sighandler_t;
+        sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+        sigemptyset(&mut sa.sa_mask);
+
+        if sigaction(SIGINT, &sa, ptr::null_mut()) == -1 {
+            Err(Error::new(
+                ErrorKind::Other,
+                "couldn't register sigint handler",
+            ))?
         }
     }
 
