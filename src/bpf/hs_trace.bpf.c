@@ -299,7 +299,7 @@ BPF_PROG(hs_trace_create_pipe_exit)
 	bpf_map_delete_elem(&pipe_tracker, &pid);
 
 	// Get inode for pseudo filename
-	bpf_rcu_read_lock();
+	// bpf_rcu_read_lock();
 
 	struct task_struct *t = (void *)bpf_get_current_task_btf();
 	struct files_struct *files = BPF_CORE_READ(t, files);
@@ -317,7 +317,7 @@ BPF_PROG(hs_trace_create_pipe_exit)
 	u64 ino = 0;
 	ino = BPF_CORE_READ(file0, f_inode, i_ino);
 
-	bpf_rcu_read_unlock();
+	// bpf_rcu_read_unlock();
 
 	u32 key0 = 0;
 
