@@ -15,6 +15,14 @@ pub fn invoker_permissions() -> Result<(u32, u32)> {
 }
 
 pub fn resolve_executable(executable: &str) -> Result<PathBuf> {
+    let path_obj = PathBuf::from(executable);
+    if path_obj.is_absolute() || executable.contains('/') {
+        if path_obj.exists() {
+            return Ok(path_obj);
+        }
+        return Err(anyhow!("executable not found at specified path"));
+    }
+
     let path = env::var("PATH")?;
     for p in path.split(':') {
         let executable_path = PathBuf::from(p).join(executable);

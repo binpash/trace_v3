@@ -37,10 +37,11 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
-      - name: build
+      - name: build and install
         run: |
           cargo build --release
-          sudo install -o root -m 4755 target/release/trace_v3 /usr/local/bin
+          sudo ./install.sh
+          trace_v3 install
 
       - name: run tests
         run: |
