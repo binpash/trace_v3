@@ -3,12 +3,16 @@ set -e
 
 PROJ_ROOT="${PROJ_ROOT:-$(git rev-parse --show-toplevel)}"
 TEST="${PROJ_ROOT}"/tests/long
-TRACE=${TRACE:-$1}
-
 mkdir -p "${TEST}"/repoclone
-cd "${TEST}"/repoclone
 
-"${TRACE}" sh -c "git clone https://github.com/git/git.git"
+SCRIPT_NAME=$(basename "$0" .sh)
 
-rm -rf "${TEST}"/repoclone/*
-rmdir "${TEST}"/repoclone
+trace_v3 \
+    --dep-file "${TEST}/${SCRIPT_NAME}.deps" \
+    --trace-file "${TEST}/${SCRIPT_NAME}.trace" \
+    --missed-file "${TEST}/${SCRIPT_NAME}.missed" \
+    -- sh -c "git clone https://github.com/git/git.git ${TEST}/repoclone >/dev/null 2>&1"
+
+rm -rf "${TEST}"/repoclone
+
+[ $(($(cat "${SCRIPT_NAME}.missed"))) -eq 0 ]
