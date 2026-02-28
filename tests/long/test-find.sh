@@ -2,7 +2,7 @@
 set -e
 
 PROJ_ROOT="${PROJ_ROOT:-$(git rev-parse --show-toplevel)}"
-TEST="${PROJ_ROOT}"/tests
+TEST="${PROJ_ROOT}"/tests/long
 
 SCRIPT_NAME=$(basename "$0" .sh)
 
@@ -12,4 +12,4 @@ trace_v3 \
     --missed-file "${TEST}/${SCRIPT_NAME}.missed" \
     -- sh -c "find / >/dev/null 2>&1"
 
-[ $(($(cat "${SCRIPT_NAME}.missed"))) -eq 0 ]
+[ $(($(cat "${TEST}/${SCRIPT_NAME}.missed"))) -eq 0 ]

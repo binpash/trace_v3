@@ -15,4 +15,4 @@ trace_v3 \
 
 rm -rf "${TEST}"/repoclone
 
-[ $(($(cat "${SCRIPT_NAME}.missed"))) -eq 0 ]
+[ $(($(cat "${TEST}/${SCRIPT_NAME}.missed"))) -eq 0 ]
