@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::Parser;
 use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
 use libc::{
-    c_int, kill, sigaction, sigaddset, sigemptyset, sighandler_t, sigprocmask, sigset_t, sigwait,
-    waitpid, SA_NOCLDSTOP, SA_RESTART, SIGCHLD, SIGINT, SIGUSR1, SIG_BLOCK, SIG_UNBLOCK,
+    c_int, kill, sigaction, sigemptyset, sighandler_t, waitpid, SA_NOCLDSTOP, SA_RESTART, SIGCHLD,
+    SIGCONT, SIGINT, SIGSTOP,
 };
 use nix::unistd::{setgroups, setresgid, setresuid, Gid, Uid};
 use std::ffi::CStr;
@@ -23,11 +23,9 @@ mod installer;
 mod utils;
 
 use crate::cli::{Cli, Commands, OutputMode, Outputs, StreamOutputs};
-use crate::dep_tracer::event_stream_handler;
-use crate::dep_tracer::SyscallEvent;
-use crate::dep_tracer::{CTXT, LOGS, SETS};
+use crate::dep_tracer::{event_stream_handler, SyscallEvent, CTXT, LOGS, SETS};
 use crate::installer::{installer, Tracer};
-use crate::utils::invoker_permissions;
+use crate::utils::{invoker_permissions, resolve_executable};
 use trace_v3::sys_enter_info_t;
 use trace_v3::sys_exit_info_t;
 
@@ -61,36 +59,33 @@ fn fork_child(cli: &Cli) -> Result<i32> {
         Err(Error::new(ErrorKind::Other, "couldn't fork"))?;
     }
     if tracee_pid == 0 {
+        let executable_path = resolve_executable(&cli.cmd[0])?;
+        let prog_str = executable_path
+            .as_os_str()
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Executable path is not valid UTF-8"))?;
+
         unsafe {
-            let mut set: sigset_t = zeroed();
+            // prog
+            let prog = CString::new(prog_str).expect("NUL byte in argument");
 
-            // block SIGUSR1, so it can become pending
-            sigemptyset(&mut set);
-            sigaddset(&mut set, SIGUSR1);
-            sigprocmask(SIG_BLOCK, &mut set, ptr::null_mut());
-
-            // wait on SIGUSR1
-            let mut sig = zeroed();
-            if sigwait(&mut set, &mut sig) != 0 {
-                Err(Error::new(ErrorKind::Other, "couldn't sigwait"))?;
-            }
-
-            // unblock SIGUSR1
-            sigemptyset(&mut set);
-            sigprocmask(SIG_UNBLOCK, &mut set, ptr::null_mut());
-
+            // argv
             let cstr_args: Vec<CString> = cli
                 .cmd
                 .iter()
                 .map(|s| CString::new(s.as_str()).expect("NUL byte in argument"))
                 .collect();
-
-            // build argv
             let mut argv: Vec<*const c_char> = cstr_args.iter().map(|s| s.as_ptr()).collect();
             argv.push(std::ptr::null());
 
-            let prog = &cstr_args[0];
+            // envp
+            let cstr_env: Vec<CString> = std::env::vars()
+                .map(|(k, v)| CString::new(format!("{k}={v}")).expect("NUL byte in argument"))
+                .collect();
+            let mut envp: Vec<*const c_char> = cstr_env.iter().map(|s| s.as_ptr()).collect();
+            envp.push(std::ptr::null());
 
+            // de-escalate permissions
             let (uid, gid) = invoker_permissions()?;
             let target_uid = Uid::from_raw(uid);
             let target_gid = Gid::from_raw(gid);
@@ -98,7 +93,9 @@ fn fork_child(cli: &Cli) -> Result<i32> {
             setresgid(target_gid, target_gid, target_gid).expect("setresgid");
             setresuid(target_uid, target_uid, target_uid).expect("setresuid");
 
-            libc::execvp(prog.as_ptr(), argv.as_ptr());
+            // wait for parent to signal that it's ready
+            libc::raise(SIGSTOP);
+            libc::execve(prog.as_ptr(), argv.as_ptr(), envp.as_ptr());
             libc::perror(b"execvp failed\0".as_ptr() as _);
             libc::_exit(127);
         }
@@ -143,7 +140,17 @@ fn main() -> Result<()> {
     } else {
         None
     };
+
+    // either trace the pid or fork the child
+    if !attach_to_existing_proc {
+        match fork_child(&cli) {
+            Ok(pid) => tracee_pid = pid,
+            Err(e) => Err(e)?,
+        }
+    }
+
     // set up sighandler to detect when child terminates so we can reap
+    // also handle SIGINT so we can clean up the tracer maps
     unsafe {
         let mut sa: sigaction = zeroed();
         sa.sa_sigaction = sigchld_handler as *const () as sighandler_t;
@@ -166,14 +173,6 @@ fn main() -> Result<()> {
                 ErrorKind::Other,
                 "couldn't register sigint handler",
             ))?
-        }
-    }
-
-    // either trace the pid or fork the child
-    if !attach_to_existing_proc {
-        match fork_child(&cli) {
-            Ok(pid) => tracee_pid = pid,
-            Err(e) => Err(e)?,
         }
     }
 
@@ -301,7 +300,7 @@ fn main() -> Result<()> {
     // start the child
     unsafe {
         if !attach_to_existing_proc {
-            kill(tracee_pid as i32, SIGUSR1);
+            kill(tracee_pid as i32, SIGCONT);
         }
     }
 

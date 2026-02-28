@@ -1,6 +1,6 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use nix::unistd::{geteuid, getgid, getuid, setresuid, Uid};
-use std::{env, io};
+use std::{env, io, path::PathBuf};
 
 pub fn invoker_permissions() -> Result<(u32, u32)> {
     let uid = match env::var("SUDO_UID").ok() {
@@ -12,6 +12,17 @@ pub fn invoker_permissions() -> Result<(u32, u32)> {
         None => getgid().as_raw(), // if invoking with setuid, use rgid
     };
     Ok((uid, gid))
+}
+
+pub fn resolve_executable(executable: &str) -> Result<PathBuf> {
+    let path = env::var("PATH")?;
+    for p in path.split(':') {
+        let executable_path = PathBuf::from(p).join(executable);
+        if executable_path.exists() {
+            return Ok(executable_path);
+        }
+    }
+    Err(anyhow!("executable not found"))
 }
 
 /// Safely drops effective privileges to the Real User ID while held.
