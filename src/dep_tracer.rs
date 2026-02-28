@@ -1,15 +1,15 @@
+use crate::cli::Output;
 use anyhow::Result;
 use libc::{self};
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
+use std::io::Write;
 use std::path::{Component, PathBuf};
 use std::sync::mpsc;
 use std::sync::Mutex;
 use syscallnrs::syscall_of_nr;
 use trace_v3::*;
-use std::io::Write;
-use crate::cli::Output;
 pub struct StreamCfg {
     pub read_out: Option<Output>,
     pub write_out: Option<Output>,
@@ -404,7 +404,7 @@ impl RWSet {
     pub fn update_read_set(&mut self, path: PathBuf) -> bool {
         self.read_set.insert(path)
     }
-    pub fn update_write_set(&mut self, path: PathBuf) -> bool{
+    pub fn update_write_set(&mut self, path: PathBuf) -> bool {
         self.write_set.insert(path)
     }
 
@@ -511,9 +511,11 @@ fn on_event_update_rw_sets(event: SyscallInfo, s_cfg: &mut Option<StreamCfg>) {
                 parse_openat(&mut ctxt, &mut sets, pid_tgid, ret, flags, fd, path, s_cfg)
             }
             #[cfg(target_arch = "x86_64")]
-            libc::SYS_open => parse_open(&mut ctxt, &mut sets, pid_tgid, ret, flags, &path),
+            libc::SYS_open => parse_open(&mut ctxt, &mut sets, pid_tgid, ret, flags, &path, s_cfg),
             libc::SYS_chdir => parse_chdir(&mut ctxt, &mut sets, pid_tgid, ret, path, s_cfg),
-            libc::SYS_symlinkat => parse_symlinkat(&mut ctxt, &mut sets, pid_tgid, ret, fd, path, s_cfg),
+            libc::SYS_symlinkat => {
+                parse_symlinkat(&mut ctxt, &mut sets, pid_tgid, ret, fd, path, s_cfg)
+            }
             // libc::SYS_symlink => {}
             // r path
             libc::SYS_execve | libc::SYS_statfs | libc::SYS_getxattr | libc::SYS_lgetxattr => {
@@ -544,7 +546,9 @@ fn on_event_update_rw_sets(event: SyscallInfo, s_cfg: &mut Option<StreamCfg>) {
             | libc::SYS_readlinkat
             | libc::SYS_faccessat
             | libc::SYS_faccessat2
-            | libc::SYS_execveat => parse_r_fd_path_e1(&mut ctxt, &mut sets, pid_tgid, fd, path, s_cfg),
+            | libc::SYS_execveat => {
+                parse_r_fd_path_e1(&mut ctxt, &mut sets, pid_tgid, fd, path, s_cfg)
+            }
             // w fd path
             libc::SYS_linkat
             | libc::SYS_unlinkat
@@ -579,7 +583,9 @@ fn on_event_update_rw_sets(event: SyscallInfo, s_cfg: &mut Option<StreamCfg>) {
             libc::SYS_renameat | libc::SYS_renameat2 => {
                 parse_renameat(&mut ctxt, &mut sets, pid_tgid, fd, path, fd2, path2, s_cfg)
             }
-            libc::SYS_pipe2 => parse_pipe2(&mut ctxt, &mut sets, pid_tgid, flags, fd, path, fd2, s_cfg),
+            libc::SYS_pipe2 => {
+                parse_pipe2(&mut ctxt, &mut sets, pid_tgid, flags, fd, path, fd2, s_cfg)
+            }
             _ => {}
         },
         SyscallInfo::EventFcntl {
@@ -654,7 +660,7 @@ fn parse_memfd_create(
     flags: u32,
     _fd: i32,
     path: &str,
-    s_cfg: &mut Option<StreamCfg>
+    s_cfg: &mut Option<StreamCfg>,
 ) {
     if ret < 0 {
         return;
@@ -725,7 +731,7 @@ fn parse_pipe2(
     fd: i32,
     path: &str,
     fd2: i32,
-    s_cfg: &mut Option<StreamCfg>
+    s_cfg: &mut Option<StreamCfg>,
 ) {
     let path = convert_absolute(ctxt, pid_tgid, path, None);
     ctxt.create_pipe(pid_tgid, fd, fd2, flags, path.clone());
@@ -733,7 +739,13 @@ fn parse_pipe2(
     insert_with_ancestors(sets, path, AccessKind::Write, s_cfg);
 }
 
-fn parse_sys_inotify_add_watch(ctxt: &mut Context, sets: &mut RWSet, pid_tgid: u64, path: &str, s_cfg: &mut Option<StreamCfg>) {
+fn parse_sys_inotify_add_watch(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid_tgid: u64,
+    path: &str,
+    s_cfg: &mut Option<StreamCfg>,
+) {
     if path.is_empty() {
         return;
     }
@@ -750,7 +762,7 @@ fn parse_openat(
     flags: u32,
     fd: i32,
     path: &str,
-    s_cfg: &mut Option<StreamCfg>
+    s_cfg: &mut Option<StreamCfg>,
 ) {
     let abs = convert_absolute(&ctxt, pid_tgid, &path, Some(fd));
     if ret >= 0 {
@@ -811,6 +823,7 @@ fn parse_open(
     ret: i64,
     flags: u32,
     path: &str,
+    s_cfg: &mut Option<StreamCfg>,
 ) {
     let abs = convert_absolute(&ctxt, pid_tgid, &path, None);
     // TODO: Why is this needed?
@@ -836,10 +849,17 @@ fn parse_open(
     } else {
         AccessKind::Write
     };
-    insert_with_ancestors(sets, abs, kind);
+    insert_with_ancestors(sets, abs, kind, s_cfg);
 }
 
-fn parse_chdir(ctxt: &mut Context, sets: &mut RWSet, pid_tgid: u64, ret: i64, path: &str, s_cfg: &mut Option<StreamCfg>) {
+fn parse_chdir(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid_tgid: u64,
+    ret: i64,
+    path: &str,
+    s_cfg: &mut Option<StreamCfg>,
+) {
     let abs = convert_absolute(ctxt, pid_tgid, &path, None);
     if ret == 0 {
         ctxt.cwd_map.insert(pid_tgid, abs.clone());
@@ -863,7 +883,7 @@ fn parse_symlinkat(
     ret: i64,
     fd: i32,
     path: &str,
-    s_cfg: &mut Option<StreamCfg>
+    s_cfg: &mut Option<StreamCfg>,
 ) {
     let abs = convert_absolute(ctxt, pid_tgid, &path, Some(fd));
     let kind = if ret != 0 {
@@ -875,7 +895,13 @@ fn parse_symlinkat(
     insert_with_ancestors(sets, abs, kind, s_cfg);
 }
 
-fn parse_r_first_path_e1(ctxt: &mut Context, sets: &mut RWSet, pid_tgid: u64, path: &str, s_cfg: &mut Option<StreamCfg>) {
+fn parse_r_first_path_e1(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid_tgid: u64,
+    path: &str,
+    s_cfg: &mut Option<StreamCfg>,
+) {
     if path.is_empty() {
         return;
     }
@@ -890,7 +916,7 @@ fn parse_w_first_path_e1(
     pid_tgid: u64,
     ret: i64,
     path: &str,
-    s_cfg: &mut Option<StreamCfg>
+    s_cfg: &mut Option<StreamCfg>,
 ) {
     if path.is_empty() {
         return;
@@ -906,7 +932,14 @@ fn parse_w_first_path_e1(
     insert_with_ancestors(sets, abs, kind, s_cfg);
 }
 
-fn parse_r_fd_path_e1(ctxt: &mut Context, sets: &mut RWSet, pid_tgid: u64, fd: i32, path: &str, s_cfg: &mut Option<StreamCfg>) {
+fn parse_r_fd_path_e1(
+    ctxt: &mut Context,
+    sets: &mut RWSet,
+    pid_tgid: u64,
+    fd: i32,
+    path: &str,
+    s_cfg: &mut Option<StreamCfg>,
+) {
     if path.is_empty() {
         return;
     }
@@ -923,7 +956,7 @@ fn parse_w_fd_path_e1(
     ret: i64,
     fd: i32,
     path: &str,
-    s_cfg: &mut Option<StreamCfg>
+    s_cfg: &mut Option<StreamCfg>,
 ) {
     if path.is_empty() {
         return;
@@ -948,13 +981,13 @@ fn parse_renameat(
     path: &str,
     fd2: i32,
     path2: &str,
-    s_cfg: &mut Option<StreamCfg>
+    s_cfg: &mut Option<StreamCfg>,
 ) {
     let abs_path_1 = convert_absolute(ctxt, pid_tgid, path, Some(fd));
     let abs_path_2 = convert_absolute(ctxt, pid_tgid, path2, Some(fd2));
 
-    insert_with_ancestors(sets, abs_path_1, AccessKind::Write,  s_cfg);
-    insert_with_ancestors(sets, abs_path_2, AccessKind::Write,  s_cfg);
+    insert_with_ancestors(sets, abs_path_1, AccessKind::Write, s_cfg);
+    insert_with_ancestors(sets, abs_path_2, AccessKind::Write, s_cfg);
 }
 
 fn emit_rw(s_cfg: &mut Option<StreamCfg>, kind: AccessKind, p: &PathBuf) {
@@ -974,7 +1007,12 @@ fn emit_rw(s_cfg: &mut Option<StreamCfg>, kind: AccessKind, p: &PathBuf) {
     }
 }
 
-fn insert_with_ancestors(sets: &mut RWSet, p: PathBuf, kind: AccessKind, s_cfg: &mut Option<StreamCfg>) {
+fn insert_with_ancestors(
+    sets: &mut RWSet,
+    p: PathBuf,
+    kind: AccessKind,
+    s_cfg: &mut Option<StreamCfg>,
+) {
     let mut check: bool;
     match kind {
         AccessKind::Read => {
@@ -1004,7 +1042,10 @@ fn insert_with_ancestors(sets: &mut RWSet, p: PathBuf, kind: AccessKind, s_cfg: 
     }
 }
 
-pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>, mut s_cfg: Option<StreamCfg>) -> Result<()> {
+pub fn event_stream_handler(
+    rx: mpsc::Receiver<Option<SyscallEvent>>,
+    mut s_cfg: Option<StreamCfg>,
+) -> Result<()> {
     loop {
         match rx.recv() {
             Ok(Some(enter @ SyscallEvent::Enter { pid_tgid, .. })) => {
@@ -1043,50 +1084,54 @@ pub fn event_stream_handler(rx: mpsc::Receiver<Option<SyscallEvent>>, mut s_cfg:
                     } = &event_queue[len - 2]
                     {
                         if *event_type == sys_enter_event_type_t_ENTER_PATH0 {
-                            on_event_update_rw_sets(SyscallInfo::Event0 {
-                                pid_tgid: *pid_tgid,
-                                ret,
-                                syscall_nr: *syscall_nr,
-                                flags: *flags,
-                            },
-                            &mut s_cfg
+                            on_event_update_rw_sets(
+                                SyscallInfo::Event0 {
+                                    pid_tgid: *pid_tgid,
+                                    ret,
+                                    syscall_nr: *syscall_nr,
+                                    flags: *flags,
+                                },
+                                &mut s_cfg,
                             );
                         }
                         if *event_type == sys_enter_event_type_t_ENTER_PATH1 {
-                            on_event_update_rw_sets(SyscallInfo::Event1 {
-                                pid_tgid: *pid_tgid,
-                                ret,
-                                syscall_nr: *syscall_nr,
-                                flags: *flags,
-                                fd: *fd,
-                                path: &*path1,
-                            },
-                            &mut s_cfg,
+                            on_event_update_rw_sets(
+                                SyscallInfo::Event1 {
+                                    pid_tgid: *pid_tgid,
+                                    ret,
+                                    syscall_nr: *syscall_nr,
+                                    flags: *flags,
+                                    fd: *fd,
+                                    path: &*path1,
+                                },
+                                &mut s_cfg,
                             );
                         }
                         if *event_type == sys_enter_event_type_t_ENTER_PATH2 {
-                            on_event_update_rw_sets(SyscallInfo::Event2 {
-                                pid_tgid: *pid_tgid,
-                                ret,
-                                syscall_nr: *syscall_nr,
-                                flags: *flags,
-                                fd: *fd,
-                                path: &*path1,
-                                fd2: *fd2,
-                                path2: &*path2,
-                            },
-                            &mut s_cfg
+                            on_event_update_rw_sets(
+                                SyscallInfo::Event2 {
+                                    pid_tgid: *pid_tgid,
+                                    ret,
+                                    syscall_nr: *syscall_nr,
+                                    flags: *flags,
+                                    fd: *fd,
+                                    path: &*path1,
+                                    fd2: *fd2,
+                                    path2: &*path2,
+                                },
+                                &mut s_cfg,
                             );
                         }
                         if *event_type == sys_enter_event_type_t_ENTER_FCNTL {
-                            on_event_update_rw_sets(SyscallInfo::EventFcntl {
-                                pid_tgid: *pid_tgid,
-                                ret,
-                                fd: *fd,
-                                cmd: *cmd,
-                                arg: *arg,
-                            },
-                            &mut s_cfg
+                            on_event_update_rw_sets(
+                                SyscallInfo::EventFcntl {
+                                    pid_tgid: *pid_tgid,
+                                    ret,
+                                    fd: *fd,
+                                    cmd: *cmd,
+                                    arg: *arg,
+                                },
+                                &mut s_cfg,
                             );
                         }
                     }
