@@ -1,0 +1,82 @@
+trace_v3 - File Dependency Tracing
+
+
+trace_v3 is a Linux file dependency tracing tool built on eBPF. It attaches to
+syscall tracepoints and records which files a command reads and writes. It can
+produce a summary of dependencies at the end of a run and optionally stream
+events while the command is running.
+
+
+1. Requirements
+- Linux with eBPF support.
+- Rust toolchain.
+- Root privileges.
+
+
+2. Build and Install
+From the project root:
+
+1) Build the release binary:
+   cargo build -r
+
+   This creates:
+   target/release/trace_v3
+
+2) Install the binary as setuid root:
+   sudo ./install.sh
+
+   This installs trace_v3 to /usr/local/bin/ owned by root with mode 4755.
+
+3) Load and pin the eBPF programs and maps (later runs
+   reuse these pinned maps/programs instead of reinstalling them):
+   sudo trace_v3 install
+
+
+3. Basic Usage
+General form:
+   trace_v3 Subcommands -- <command> args
+
+Trace a new command:
+   trace_v3 -- command args
+
+Example:
+   trace_v3 -- ls -R /etc
+
+Attach to an existing process:
+   trace_v3 attach pid
+
+
+Subcommands:
+- install       Load eBPF programs/maps into the kernel.
+- attach <pid>  Attach to an already running process instead of forking.
+
+
+4. Output Files
+trace_v3 can write three kinds of outputs (each takes "-" for stdout or a path):
+
+
+5. Streaming Options
+Modes:
+--mode summary   Default. Only write summary files at the end.
+--mode stream    Only stream events, no summary files.
+--mode both      Stream events and also write summary files.
+
+To enable streaming:
+--stream-read
+   Stream read events as lines like: R <path>
+
+--stream-write
+   Stream write events as lines like: W <path>
+
+--stream-trace
+   Stream dependency events while running.
+
+Destinations for streams (path or "-"; default "-"):
+--stream-read-file <path>
+--stream-write-file <path>
+--stream-trace-file <path>
+
+6. Notes
+- No io_uring-based I/O.
+- Some events may be dropped under heavy load.
+
