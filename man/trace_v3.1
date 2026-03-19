@@ -1,0 +1,76 @@
+.TH TRACE_V3 1 "March 2026" "trace_v3" "User Commands"
+.SH NAME
+trace_v3 \- file dependency tracer using eBPF
+.SH SYNOPSIS
+.B trace_v3
+[\fIOPTIONS\fR] [\fISUBCOMMAND\fR] -- \fICOMMAND\fR [\fIARGS...\fR]
+.br
+.B trace_v3
+[\fIOPTIONS\fR] attach \fIPID\fR
+.SH DESCRIPTION
+\fBtrace_v3\fR traces file dependencies for a command using eBPF. It attaches
+to syscall tracepoints and records which files are read and written. It can
+produce summary output at the end of a run and optionally stream events while
+the command is running.
+.SH OPTIONS
+.TP
+\fB--trace-file\fR \fIPATH\fR
+Write per-event trace log to \fIPATH\fR or "-" for stdout (default "-").
+.TP
+\fB--dep-file\fR \fIPATH\fR
+Write summarized dependencies to \fIPATH\fR or "-" for stdout (default "-").
+.TP
+\fB--missed-file\fR \fIPATH\fR
+Write count of missed events to \fIPATH\fR or "-" (default "-").
+.TP
+\fB--mode\fR \fIsummary|stream|both\fR
+Select summary-only (default), streaming-only, or both.
+.TP
+\fB--stream-read\fR
+Enable streaming of read events ("R <path>").
+.TP
+\fB--stream-write\fR
+Enable streaming of write events ("W <path>").
+.TP
+\fB--stream-trace\fR
+Enable streaming of dependency events.
+.TP
+\fB--stream-read-file\fR \fIPATH\fR
+Destination for streamed read events (default "-").
+.TP
+\fB--stream-write-file\fR \fIPATH\fR
+Destination for streamed write events (default "-").
+.TP
+\fB--stream-trace-file\fR \fIPATH\fR
+Destination for streamed dependency events (default "-").
+.SH SUBCOMMANDS
+.TP
+\fBinstall\fR
+Load and pin the eBPF programs and maps in the kernel. Typically run once
+before tracing.
+.TP
+\fBattach\fR \fIPID\fR
+Attach to an already running process instead of forking a new one.
+.SH EXAMPLES
+.TP
+Trace a command and write outputs to files:
+.br
+\fBtrace_v3 --trace-file out/trace.log --dep-file out/deps.log --missed-file out/missed.txt -- make -j8\fR
+.TP
+Stream read and write events while also writing summary files:
+.br
+\fBtrace_v3 --mode both --stream-read --stream-write -- make test\fR
+.TP
+Attach to an existing process:
+.br
+\fBtrace_v3 --mode stream attach 12345\fR
+.SH FILES
+.TP
+\fB/sys/fs/bpf/trace_v3\fR
+Pinned eBPF programs and maps used by trace_v3.
+.SH SEE ALSO
+trace_v3 documentation file (DOCUMENTATION.txt)
+.SH AUTHOR
+trace_v3 contributors
+
+
