@@ -3,3 +3,4 @@
 *.deps
 *.trace
 *.missed
+**/output

@@ -9,7 +9,7 @@ cat "./${test_name}.sh"
 
 trace_v3 --dep-file /dev/null --trace-file "${TEST_OUTPUT}/trace_v3_log" -- "./${test_name}.sh" >/dev/null 2>&1
 
-strace -y -f --seccomp-bpf -e %file,fork,clone,fcntl -o "${TEST_OUTPUT}/strace_log" -- "./${test_name}.sh" >/dev/null 2>&1
+strace -q -y -f --seccomp-bpf -e %file,fork,clone,fcntl -o "${TEST_OUTPUT}/strace_log" -- "./${test_name}.sh" >/dev/null 2>&1
 
 cat "${TEST_OUTPUT}/trace_v3_log" | cut -d'(' -f1 > "${TEST_OUTPUT}/trace_v3_calls"
 cat "${TEST_OUTPUT}/strace_log" | cut -d' ' -f2 | cut -d'(' -f1 | grep -v "+++" > "${TEST_OUTPUT}/strace_calls"
