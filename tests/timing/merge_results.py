@@ -11,6 +11,8 @@ from datetime import datetime
 
 def extract_benchmark(json_path, result_index=0):
     """Extract timing data from hyperfine JSON output at specified result index"""
+    if not os.path.exists(json_path):
+        return None
     try:
         with open(json_path) as f:
             data = json.load(f)
@@ -68,17 +70,23 @@ def merge_results(temp_dir, json_output, csv_output, test_name, runs, warmups):
         except Exception as e:
             print(f"Warning: Could not load existing results: {e}", file=sys.stderr)
 
-    # Extract results from strace benchmark (BPF not installed)
+    # Extract results from individual benchmarks
+    baseline_json = os.path.join(temp_dir, f"{test_name}_baseline.json")
     strace_json = os.path.join(temp_dir, f"{test_name}_strace.json")
-    results["benchmarks"][test_name]["baseline"] = extract_benchmark(strace_json, 0)
-    results["benchmarks"][test_name]["strace"] = extract_benchmark(strace_json, 1)
-
-    # Extract results from trace_v3 benchmark (BPF installed)
+    baseline_bpf_json = os.path.join(temp_dir, f"{test_name}_baseline_bpf.json")
     trace_v3_json = os.path.join(temp_dir, f"{test_name}_trace_v3.json")
+
+    results["benchmarks"][test_name]["baseline"] = extract_benchmark(baseline_json, 0)
+    results["benchmarks"][test_name]["strace"] = extract_benchmark(strace_json, 0)
     results["benchmarks"][test_name]["baseline_bpf"] = extract_benchmark(
-        trace_v3_json, 0
+        baseline_bpf_json, 0
     )
-    results["benchmarks"][test_name]["trace_v3"] = extract_benchmark(trace_v3_json, 1)
+    results["benchmarks"][test_name]["trace_v3"] = extract_benchmark(trace_v3_json, 0)
+
+    # Clean out any None values if some benchmarks were skipped/failed
+    results["benchmarks"][test_name] = {
+        k: v for k, v in results["benchmarks"][test_name].items() if v is not None
+    }
 
     # Write merged results to JSON
     with open(json_output, "w") as f:
