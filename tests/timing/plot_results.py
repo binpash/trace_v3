@@ -131,8 +131,9 @@ def plot_strace_vs_trace_v3_scatter(results, output_dir):
 
     # Add labels for each point
     for test, strace, trace_v3 in zip(tests, strace_times, trace_v3_times):
+        speedup = strace / trace_v3
         ax.annotate(
-            test,
+            f"{test} ({speedup:.1f}x)",
             (strace, trace_v3),
             xytext=(5, 5),
             textcoords="offset points",
@@ -154,6 +155,40 @@ def plot_strace_vs_trace_v3_scatter(results, output_dir):
         label="Equal time (strace = trace_v3)",
         alpha=0.7,
     )
+
+    # Add logarithmic speedup lines
+    max_speedup = max(s / t for s, t in zip(strace_times, trace_v3_times))
+
+    speedup_levels = []
+    base = 1
+    while base <= max(10, max_speedup * 2):
+        speedup_levels.extend([base * 2, base * 5, base * 10])
+        base *= 10
+
+    for speedup in speedup_levels:
+        if speedup > max(10, max_speedup * 2):
+            break
+        ax.plot(
+            [min_val, max_val],
+            [min_val / speedup, max_val / speedup],
+            "--",
+            linewidth=1,
+            color="gray",
+            alpha=0.6,
+            label=f"{speedup}x speedup",
+        )
+        ax.text(
+            max_val,
+            max_val / speedup,
+            f"{speedup}x",
+            fontsize=9,
+            color="gray",
+            va="bottom",
+            ha="right",
+        )
+
+    ax.set_xlim([min_val, max_val])
+    ax.set_ylim([min_val, max_val])
 
     # Shade regions
     ax.fill_between(
