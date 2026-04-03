@@ -161,16 +161,16 @@ def plot_strace_vs_trace_v3_scatter(results, output_dir):
         [min_val, max_val],
         max_val,
         alpha=0.1,
-        color="green",
-        label="trace_v3 faster",
+        color="red",
+        label="strace faster",
     )
     ax.fill_between(
         [min_val, max_val],
         [min_val, max_val],
         min_val,
         alpha=0.1,
-        color="red",
-        label="strace faster",
+        color="green",
+        label="trace_v3 faster",
     )
 
     ax.set_xlabel("Strace Time (seconds)", fontsize=12)

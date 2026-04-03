@@ -103,7 +103,7 @@ benchmark_test() {
     uninstall_bpf
 
     print_info "Running baseline vs strace..."
-    hyperfine --min-runs "${RUNS}" --warmup "${WARMUPS}" -N --ignore-failure \
+    hyperfine --min-runs "${RUNS}" --warmup "${WARMUPS}" --ignore-failure \
         --export-json "${TEMP_DIR}/${test_name}_strace.json" \
         -- \
         "${command}" \
@@ -112,7 +112,7 @@ benchmark_test() {
     install_bpf
 
     print_info "Running baseline (with BPF program overhead) vs trace_v3..."
-    hyperfine --min-runs "${RUNS}" --warmup "${WARMUPS}" -N --ignore-failure \
+    hyperfine --min-runs "${RUNS}" --warmup "${WARMUPS}" --ignore-failure \
         --export-json "${TEMP_DIR}/${test_name}_trace_v3.json" \
         "${command}" \
         "${TRACE_V3_CMD} ${command}"
