@@ -50,7 +50,7 @@ run_all_benches() {
     run_bench "tar" "tar -cf /tmp/bench_test.tar /usr/include && rm /tmp/bench_test.tar"
 
     # 6. Git clone (Network and heavy file creation/writing)
-    run_bench "git_clone" "git clone --depth 1 https://github.com/git/git.git /tmp/git_bench >/dev/null 2>&1 && rm -rf /tmp/git_bench"
+    RUNS_BASELINE=5 RUNS_TOOL=5 run_bench "git_clone" "git clone --depth 1 https://github.com/git/git.git /tmp/git_bench >/dev/null 2>&1 && rm -rf /tmp/git_bench"
 }
 
 # Run all tests without BPF first
