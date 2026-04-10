@@ -4,3 +4,4 @@
 *.trace
 *.missed
 **/output
+output/

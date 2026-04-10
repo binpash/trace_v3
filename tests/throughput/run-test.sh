@@ -3,7 +3,7 @@
 set -e
 
 if [ $# -eq 0 ]; then
-    echo "Usage: $0 proc_count event_freq"
+    echo "Usage: $0 proc_count"
     exit 1
 fi
 
@@ -16,12 +16,9 @@ mkdir -p "${TEST_OUTPUT}"
 par_num="$1"
 shift 1
 
-freq="$1"
-shift 1
-
 for i in $(seq 1 "$par_num")
 do
-    exec ./test-throughput $freq &
+    exec ./test-throughput &
 done
 
 wait

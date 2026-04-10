@@ -131,4 +131,12 @@ else
     exit 1
 fi
 
+print_header "THROUGHPUT TESTS"
+if "${PROJ_ROOT}/tests/throughput/run-throughput.sh"; then
+    print_success "Throughput tests completed successfully!"
+else
+    print_error "Throughput tests failed!"
+    exit 1
+fi
+
 print_header "ALL TESTS FINISHED SUCCESSFULLY"
