@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
 use libc::{
@@ -203,7 +203,8 @@ fn main() -> Result<()> {
     // Initialize the Tracer
     let tracer_pid = unsafe { libc::getpid() };
     let tracer_pid_buf = &tracer_pid.to_ne_bytes();
-    let tracer = Tracer::new(tracer_pid, cli.ringbuf_size)?;
+    let tracer = Tracer::new(tracer_pid, cli.ringbuf_size)
+        .context("Failed to initialize tracer. Did you run `trace_v3 install`?")?;
 
     // update the pid_set for tracer
     let tracee_pid_buf = &tracee_pid.to_ne_bytes();
