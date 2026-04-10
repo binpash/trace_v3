@@ -24,7 +24,7 @@ mod utils;
 
 use crate::cli::{Cli, Commands, OutputMode, Outputs, StreamOutputs};
 use crate::dep_tracer::{event_stream_handler, SyscallEvent, CTXT, LOGS, SETS};
-use crate::installer::{installer, Tracer};
+use crate::installer::{installer, uninstall, Tracer};
 use crate::utils::{invoker_permissions, resolve_executable};
 use trace_v3::sys_enter_info_t;
 use trace_v3::sys_exit_info_t;
@@ -107,6 +107,9 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     if let Some(Commands::Install {}) = cli.command {
         return installer();
+    }
+    if let Some(Commands::Uninstall {}) = cli.command {
+        return uninstall();
     }
 
     // TODO: resolve the path of the executable before the fork

@@ -81,6 +81,16 @@ pub fn installer() -> Result<()> {
     Ok(())
 }
 
+pub fn uninstall() -> Result<()> {
+    if std::path::Path::new(PIN_BASE).exists() {
+        std::fs::remove_dir_all(PIN_BASE)?;
+        println!("Uninstalled BPF programs and maps from {}", PIN_BASE);
+    } else {
+        println!("Nothing to uninstall. {} does not exist.", PIN_BASE);
+    }
+    Ok(())
+}
+
 pub struct Tracer {
     tracer_pid: i32,
     ringbufs: MapHandle,

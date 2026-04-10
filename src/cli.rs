@@ -89,6 +89,8 @@ pub enum Commands {
     Install {},
     /// Attach to an existing process by PID
     Attach { pid: i32 },
+    /// Uninstall BPF programs and maps
+    Uninstall {},
 }
 
 pub type Output = Box<dyn Write + Send>;
