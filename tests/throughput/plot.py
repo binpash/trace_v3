@@ -1,16 +1,22 @@
 import csv
+import os
 import sys
 
 import matplotlib.pyplot as plt
 
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: python plot.py <input.csv> <output.png>")
-        sys.exit(1)
-
-    input_csv = sys.argv[1]
-    output_png = sys.argv[2]
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    input_csv = (
+        sys.argv[1]
+        if len(sys.argv) > 1
+        else os.path.join(script_dir, "output", "results.csv")
+    )
+    output_png = (
+        sys.argv[2]
+        if len(sys.argv) > 2
+        else os.path.join(script_dir, "output", "throughput_boundary.png")
+    )
 
     sizes = []
     max_procs = []

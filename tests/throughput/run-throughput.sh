@@ -54,4 +54,7 @@ done
 echo "========================================"
 echo "Throughput benchmarking complete!"
 echo "Results saved to: $RESULTS_CSV"
-echo "You can plot the results using: python3 tests/throughput/plot.py $RESULTS_CSV $PLOT_PNG"
+echo "Generating plot..."
+echo "Running: python3 tests/throughput/plot.py"
+python3 plot.py
+echo "Throughput plot generated at tests/throughput/$PLOT_PNG"
