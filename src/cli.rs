@@ -9,16 +9,32 @@ use std::{
 use crate::utils::PrivGuard;
 
 fn parse_ringbuf_size(s: &str) -> Result<usize, String> {
-    let size_mib: usize = s
+    let (num_str, multiplier) = if s.ends_with('K') || s.ends_with('k') {
+        (&s[..s.len() - 1], 1024)
+    } else if s.ends_with('M') || s.ends_with('m') {
+        (&s[..s.len() - 1], 1024 * 1024)
+    } else {
+        (s, 1)
+    };
+
+    let size: usize = num_str
         .parse()
-        .map_err(|_| format!("`{}` isn't a valid number", s))?;
-    if size_mib < 1 {
-        return Err("Ringbuffer size must be at least 1MiB".to_string());
+        .map_err(|_| format!("`{}` isn't a valid number", num_str))?;
+
+    let total_size = size * multiplier;
+
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize };
+    if total_size % page_size != 0 {
+        return Err(format!(
+            "Ringbuffer size must be a multiple of the page size ({} bytes)",
+            page_size
+        ));
     }
-    if !size_mib.is_power_of_two() {
+
+    if !total_size.is_power_of_two() {
         return Err("Ringbuffer size must be a power of 2".to_string());
     }
-    Ok(size_mib * 1024 * 1024)
+    Ok(total_size)
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -71,8 +87,8 @@ pub struct Cli {
     #[arg(long, default_value = "-")]
     pub stream_trace_file: String,
 
-    /// Size of the ring buffer in MiB (must be a power of 2, at least 1)
-    #[arg(long, value_parser = parse_ringbuf_size, default_value = "4")]
+    /// Size of the ring buffer (e.g. 4M, 1024K, or 4194304). Must be a multiple of page size and a power of 2.
+    #[arg(long, value_parser = parse_ringbuf_size, default_value = "4M")]
     pub ringbuf_size: usize,
 
     #[command(subcommand)]
