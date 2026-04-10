@@ -91,7 +91,7 @@ pub struct Tracer {
 }
 
 impl Tracer {
-    pub fn new(tracer_pid: i32) -> Result<Self> {
+    pub fn new(tracer_pid: i32, ringbuf_size: usize) -> Result<Self> {
         let mut opts: libbpf_sys::bpf_map_create_opts = unsafe { std::mem::zeroed() };
         opts.sz = std::mem::size_of::<libbpf_sys::bpf_map_create_opts>() as libbpf_sys::size_t;
 
@@ -101,7 +101,7 @@ impl Tracer {
             Some(format!("ringbuf{tracer_pid}")),
             0,
             0,
-            4 * 1024 * 1024,
+            ringbuf_size as u32,
             &opts,
         )?;
         let missed = MapHandle::create(

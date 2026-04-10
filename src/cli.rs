@@ -8,7 +8,18 @@ use std::{
 
 use crate::utils::PrivGuard;
 
-
+fn parse_ringbuf_size(s: &str) -> Result<usize, String> {
+    let size_mib: usize = s
+        .parse()
+        .map_err(|_| format!("`{}` isn't a valid number", s))?;
+    if size_mib < 1 {
+        return Err("Ringbuffer size must be at least 1MiB".to_string());
+    }
+    if !size_mib.is_power_of_two() {
+        return Err("Ringbuffer size must be a power of 2".to_string());
+    }
+    Ok(size_mib * 1024 * 1024)
+}
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum OutputMode {
@@ -16,8 +27,6 @@ pub enum OutputMode {
     Stream,
     Both,
 }
-
-
 
 #[derive(Parser, Debug)]
 #[command(name = "trace_v3", arg_required_else_help = true)]
@@ -62,6 +71,10 @@ pub struct Cli {
     #[arg(long, default_value = "-")]
     pub stream_trace_file: String,
 
+    /// Size of the ring buffer in MiB (must be a power of 2, at least 1)
+    #[arg(long, value_parser = parse_ringbuf_size, default_value = "4")]
+    pub ringbuf_size: usize,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 
@@ -77,7 +90,6 @@ pub enum Commands {
     /// Attach to an existing process by PID
     Attach { pid: i32 },
 }
-
 
 pub type Output = Box<dyn Write + Send>;
 
@@ -107,7 +119,6 @@ impl Outputs {
             trace_file: make_output(&cli.trace_file)?,
             dep_file: make_output(&cli.dep_file)?,
             missed_file: make_output(&cli.missed_file)?,
-            
         })
     }
 }
