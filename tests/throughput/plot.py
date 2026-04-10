@@ -41,10 +41,16 @@ def main():
         max_procs,
         marker="o",
         linestyle="-",
-        color="b",
+        color="g",
         linewidth=2,
         markersize=8,
     )
+
+    if max_procs:
+        y_max = max(16, max(max_procs) + 2)
+        plt.ylim(0, y_max)
+        plt.fill_between(sizes, 0, max_procs, color="green", alpha=0.3)
+        plt.fill_between(sizes, max_procs, y_max, color="red", alpha=0.3)
 
     plt.xlabel("Ringbuffer Size", fontsize=12)
     plt.ylabel("Max Parallel Processes (No Missed Events)", fontsize=12)
