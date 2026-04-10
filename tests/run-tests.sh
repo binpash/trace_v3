@@ -54,7 +54,7 @@ print_header "SETUP"
 print_info "Ensuring trace_v3 eBPF programs are installed..."
 
 # Uninstall first to ensure clean state, mirroring benchmark script behavior
-sudo rm -rf /sys/fs/bpf/trace_v3 || true
+"$TRACE" uninstall || true
 
 if "$TRACE" install; then
     print_success "trace_v3 eBPF programs installed successfully."

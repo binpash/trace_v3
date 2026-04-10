@@ -55,7 +55,7 @@ run_all_benches() {
 
 # Run all tests without BPF first
 echo "Uninstalling trace_v3 BPF programs..."
-sudo rm -rf /sys/fs/bpf/trace_v3 || true
+"$TRACE" uninstall || true
 echo "trace_v3 BPF programs uninstalled"
 
 run_all_benches "no-bpf"
