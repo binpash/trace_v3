@@ -3,6 +3,7 @@ import sys
 
 import matplotlib.pyplot as plt
 
+
 def main():
     if len(sys.argv) < 3:
         print("Usage: python plot.py <input.csv> <output.png>")
@@ -50,6 +51,4 @@ def main():
 
 
 if __name__ == "__main__":
-
-if __name__ == '__main__':
     main()

@@ -6,8 +6,9 @@ cd "${PROJ_ROOT}/tests/throughput"
 
 TRACE="${TRACE:-trace_v3}"
 
-RESULTS_CSV="results.csv"
-PLOT_PNG="throughput_boundary.png"
+mkdir -p output
+RESULTS_CSV="output/results.csv"
+PLOT_PNG="output/throughput_boundary.png"
 
 echo "RingbufSize,MaxProcs" > "$RESULTS_CSV"
 
@@ -20,12 +21,12 @@ for size in "${SIZES[@]}"; do
     while true; do
         echo "  Trying $procs parallel process(es)..."
 
-        rm -f missed.txt
+        rm -f output/missed.txt
         # Run trace_v3 with the dynamically generated throughput workload
-        sudo -E "$TRACE" --ringbuf-size "$size" --missed-file missed.txt -- ./run-test.sh "$procs" > /dev/null 2>&1
+        sudo -E "$TRACE" --ringbuf-size "$size" --missed-file output/missed.txt -- ./run-test.sh "$procs" > /dev/null 2>&1
 
         # Parse the missed event count from the output file
-        missed=$(grep -o '[0-9]\+' missed.txt | head -n1 || echo 0)
+        missed=$(grep -o '[0-9]\+' output/missed.txt | head -n1 || echo 0)
         if [ -z "$missed" ]; then
             missed=0
         fi
@@ -50,6 +51,7 @@ for size in "${SIZES[@]}"; do
     done
 done
 
-echo "Benchmarking complete. Generating plot..."
-python3 plot.py "$RESULTS_CSV" "$PLOT_PNG"
-echo "Throughput plot generated at $PLOT_PNG"
+echo "========================================"
+echo "Throughput benchmarking complete!"
+echo "Results saved to: $RESULTS_CSV"
+echo "You can plot the results using: python3 tests/throughput/plot.py $RESULTS_CSV $PLOT_PNG"
