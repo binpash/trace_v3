@@ -6,7 +6,18 @@ use std::process::{Command, Stdio};
 
 use libbpf_cargo::SkeletonBuilder;
 
+#[path = "src/cli_def.rs"]
+mod cli_def;
+
 fn main() -> Result<(), Box<dyn Error>> {
+    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
+    let cmd = cli_def::command();
+    let man = clap_mangen::Man::new(cmd);
+    let mut buffer = Vec::new();
+    man.render(&mut buffer)?;
+    std::fs::write(out_dir.join("trace_v3.1"), buffer)?;
+
+    println!("cargo::rerun-if-changed=src/cli_def.rs");
     println!("cargo::rerun-if-env-changed=BUFF_SIZE");
     let buffer = env::var("BUFF_SIZE").unwrap_or_else(|_| "4".into());
 

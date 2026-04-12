@@ -18,6 +18,7 @@ use std::thread;
 use std::time::Duration;
 
 mod cli;
+mod cli_def;
 mod dep_tracer;
 mod installer;
 mod utils;
@@ -104,6 +105,8 @@ fn fork_child(cli: &Cli) -> Result<i32> {
 }
 
 fn main() -> Result<()> {
+
+
     let cli = Cli::parse();
     if let Some(Commands::Install {}) = cli.command {
         return installer();
