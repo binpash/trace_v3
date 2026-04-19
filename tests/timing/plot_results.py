@@ -226,10 +226,13 @@ def plot_strace_vs_trace_v3_scatter(results, output_dir):
 
 
 def plot_bpf_overhead(results, output_dir):
-    """Generate bar chart showing BPF installation overhead"""
+    """Grouped bar chart: baseline vs baseline_bpf, normalized so baseline=1.0"""
 
     tests = []
-    bpf_overheads = []
+    scale_factors = []
+    bpf_heights = []
+    baseline_errs = []  # [[lower_errs], [upper_errs]]
+    bpf_errs = []
 
     for test_name, data in results["benchmarks"].items():
         baseline = data.get("baseline")
@@ -238,14 +241,25 @@ def plot_bpf_overhead(results, output_dir):
         if (
             baseline
             and baseline.get("mean")
+            and baseline.get("min")
+            and baseline.get("max")
             and baseline_bpf
             and baseline_bpf.get("mean")
+            and baseline_bpf.get("min")
+            and baseline_bpf.get("max")
         ):
-            overhead_pct = (
-                (baseline_bpf["mean"] - baseline["mean"]) / baseline["mean"]
-            ) * 100
+            scale = 1.0 / baseline["mean"]
             tests.append(test_name)
-            bpf_overheads.append(overhead_pct)
+            scale_factors.append(scale)
+            bpf_heights.append(baseline_bpf["mean"] * scale)
+            baseline_errs.append(
+                [baseline["mean"] * scale - baseline["min"] * scale,
+                 baseline["max"] * scale - baseline["mean"] * scale]
+            )
+            bpf_errs.append(
+                [baseline_bpf["mean"] * scale - baseline_bpf["min"] * scale,
+                 baseline_bpf["max"] * scale - baseline_bpf["mean"] * scale]
+            )
 
     if not tests:
         print("Warning: No baseline data found for BPF overhead plot")
@@ -253,33 +267,46 @@ def plot_bpf_overhead(results, output_dir):
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Color bars based on overhead (green if small, red if large)
-    colors = [
-        "#2ecc71" if oh < 2 else "#f39c12" if oh < 5 else "#e74c3c"
-        for oh in bpf_overheads
-    ]
-    bars = ax.bar(
-        tests, bpf_overheads, color=colors, alpha=0.8, edgecolor="black", linewidth=1.5
+    n = len(tests)
+    x = np.arange(n)
+    width = 0.35
+
+    baseline_lower = [e[0] for e in baseline_errs]
+    baseline_upper = [e[1] for e in baseline_errs]
+    bpf_lower = [e[0] for e in bpf_errs]
+    bpf_upper = [e[1] for e in bpf_errs]
+
+    ax.bar(
+        x - width / 2, [1.0] * n, width,
+        yerr=[baseline_lower, baseline_upper],
+        capsize=5, color="#2ecc71", alpha=0.8, edgecolor="black", linewidth=1,
+        label="Baseline (no BPF)",
+    )
+    ax.bar(
+        x + width / 2, bpf_heights, width,
+        yerr=[bpf_lower, bpf_upper],
+        capsize=5, color="#f39c12", alpha=0.8, edgecolor="black", linewidth=1,
+        label="Baseline (BPF installed)",
     )
 
-    ax.set_ylabel("Overhead (%)", fontsize=12)
-    ax.set_title("BPF Program Installation Overhead", fontsize=14, fontweight="bold")
-    ax.axhline(y=0, color="black", linestyle="-", linewidth=0.8)
-    ax.grid(axis="y", alpha=0.3, linestyle="--")
-
-    # Add value labels on bars
-    for bar, overhead in zip(bars, bpf_overheads):
-        height = bar.get_height()
+    # Annotate overhead % above each bpf bar
+    for i, h in enumerate(bpf_heights):
+        overhead_pct = (h - 1.0) * 100
         ax.text(
-            bar.get_x() + bar.get_width() / 2.0,
-            height,
-            f"{overhead:.2f}%",
-            ha="center",
-            va="bottom" if height > 0 else "top",
-            fontsize=10,
+            x[i] + width / 2,
+            h + bpf_upper[i] + 0.01,
+            f"{overhead_pct:+.1f}%",
+            ha="center", va="bottom", fontsize=9,
         )
 
-    plt.xticks(rotation=45, ha="right")
+    ax.set_ylabel("Normalized time (baseline = 1.0)", fontsize=12)
+    ax.set_title("BPF Program Installation Overhead", fontsize=14, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(tests, rotation=45, ha="right")
+    ax.axhline(y=1.0, color="black", linestyle="--", linewidth=0.8, alpha=0.5)
+    ax.legend(fontsize=10)
+    ax.grid(axis="y", alpha=0.3, linestyle="--")
+
     plt.tight_layout()
     out = os.path.join(output_dir, "bpf_overhead.png")
     plt.savefig(out, dpi=150, bbox_inches="tight")
