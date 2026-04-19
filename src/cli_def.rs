@@ -95,6 +95,10 @@ pub struct Cli {
     #[arg(long)]
     pub throughput: bool,
 
+    /// Throughput output file or "-" for stdout; implies --throughput
+    #[arg(long)]
+    pub throughput_file: Option<String>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 

@@ -231,7 +231,7 @@ fn main() -> Result<()> {
     };
 
     // setup ringbuf
-    let measure_throughput = cli.throughput;
+    let measure_throughput = cli.throughput || cli.throughput_file.is_some();
     let bytes_received = Arc::new(AtomicU64::new(0));
     let events_received = Arc::new(AtomicU64::new(0));
     let bytes_received_rb = Arc::clone(&bytes_received);
@@ -370,19 +370,6 @@ fn main() -> Result<()> {
         };
     }
 
-    if cli.throughput {
-        let elapsed = throughput_start.elapsed().as_secs_f64();
-        let total_bytes = bytes_received.load(Ordering::Relaxed);
-        let total_events = events_received.load(Ordering::Relaxed);
-        let mb = total_bytes as f64 / (1024.0 * 1024.0);
-        let mb_per_sec = if elapsed > 0.0 { mb / elapsed } else { 0.0 };
-        let events_per_sec = if elapsed > 0.0 { total_events as f64 / elapsed } else { 0.0 };
-        eprintln!(
-            "throughput: {:.3} MB in {:.3}s = {:.3} MB/s, {} events ({:.0} events/s)",
-            mb, elapsed, mb_per_sec, total_events, events_per_sec
-        );
-    }
-
     let mut status = MaybeUninit::<c_int>::uninit();
     unsafe { if waitpid(tracee_pid, status.as_mut_ptr(), 0) != tracee_pid {} }
 
@@ -413,5 +400,26 @@ fn main() -> Result<()> {
     } else {
         writeln!(&mut outputs.missed_file, "{program_total}")?;
     }
+
+    if cli.throughput {
+        let elapsed = throughput_start.elapsed().as_secs_f64();
+        let total_bytes = bytes_received.load(Ordering::Relaxed);
+        let total_events = events_received.load(Ordering::Relaxed);
+        let mb = total_bytes as f64 / (1024.0 * 1024.0);
+        let mb_per_sec = if elapsed > 0.0 { mb / elapsed } else { 0.0 };
+        let events_per_sec = if elapsed > 0.0 { total_events as f64 / elapsed } else { 0.0 };
+        if cli.throughput_file.is_none() {
+            writeln!(
+                &mut outputs.throughput_file,
+                "throughput: {mb:.3} MB in {elapsed:.3}s = {mb_per_sec:.3} MB/s, {total_events} events ({events_per_sec:.0} events/s)"
+            )?;
+        } else {
+            writeln!(
+                &mut outputs.throughput_file,
+                "{mb:.3} {elapsed:.3} {mb_per_sec:.3} {total_events} {events_per_sec:.0}"
+            )?;
+        }
+    }
+
     Ok(())
 }

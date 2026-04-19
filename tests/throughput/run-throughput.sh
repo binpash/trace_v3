@@ -4,6 +4,8 @@ set -e
 PROJ_ROOT="${PROJ_ROOT:-$(git rev-parse --show-toplevel)}"
 cd "${PROJ_ROOT}/tests/throughput"
 
+cc -O3 -o test-throughput test-throughput.c
+
 TRACE="${TRACE:-trace_v3}"
 
 mkdir -p output

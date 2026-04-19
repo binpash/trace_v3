@@ -28,6 +28,7 @@ pub struct Outputs {
     pub trace_file: Output,
     pub dep_file: Output,
     pub missed_file: Output,
+    pub throughput_file: Output,
 }
 
 impl Outputs {
@@ -36,6 +37,7 @@ impl Outputs {
             trace_file: make_output(&cli.trace_file)?,
             dep_file: make_output(&cli.dep_file)?,
             missed_file: make_output(&cli.missed_file)?,
+            throughput_file: make_output(cli.throughput_file.as_deref().unwrap_or("-"))?,
         })
     }
 }
