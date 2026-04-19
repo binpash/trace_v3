@@ -30,7 +30,8 @@ use crate::utils::{invoker_permissions, resolve_executable};
 use trace_v3::sys_enter_info_t;
 use trace_v3::sys_exit_info_t;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
 extern "C" fn sigchld_handler(_sig: i32) {
@@ -230,9 +231,18 @@ fn main() -> Result<()> {
     };
 
     // setup ringbuf
+    let measure_throughput = cli.throughput;
+    let bytes_received = Arc::new(AtomicU64::new(0));
+    let events_received = Arc::new(AtomicU64::new(0));
+    let bytes_received_rb = Arc::clone(&bytes_received);
+    let events_received_rb = Arc::clone(&events_received);
+
     let mut rb_builder = RingBufferBuilder::new();
     rb_builder.add(&tracer.ringbuf, |data| {
-        // println!("received {} bytes", data.len());
+        if measure_throughput {
+            bytes_received_rb.fetch_add(data.len() as u64, Ordering::Relaxed);
+            events_received_rb.fetch_add(1, Ordering::Relaxed);
+        }
         let event = if data.len() == size_of::<sys_exit_info_t>() {
             let header = unsafe { &*data.as_ptr().cast::<sys_exit_info_t>() };
             SyscallEvent::Exit {
@@ -311,6 +321,8 @@ fn main() -> Result<()> {
         }
     }
 
+    let throughput_start = std::time::Instant::now();
+
     while RUNNING.load(Ordering::Relaxed) {
         match rb.poll(Duration::from_micros(25)) {
             Ok(()) => {}
@@ -356,6 +368,19 @@ fn main() -> Result<()> {
             program_total += diff;
             prev_missed = total;
         };
+    }
+
+    if cli.throughput {
+        let elapsed = throughput_start.elapsed().as_secs_f64();
+        let total_bytes = bytes_received.load(Ordering::Relaxed);
+        let total_events = events_received.load(Ordering::Relaxed);
+        let mb = total_bytes as f64 / (1024.0 * 1024.0);
+        let mb_per_sec = if elapsed > 0.0 { mb / elapsed } else { 0.0 };
+        let events_per_sec = if elapsed > 0.0 { total_events as f64 / elapsed } else { 0.0 };
+        eprintln!(
+            "throughput: {:.3} MB in {:.3}s = {:.3} MB/s, {} events ({:.0} events/s)",
+            mb, elapsed, mb_per_sec, total_events, events_per_sec
+        );
     }
 
     let mut status = MaybeUninit::<c_int>::uninit();

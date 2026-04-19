@@ -91,6 +91,10 @@ pub struct Cli {
     #[arg(long, value_parser = parse_ringbuf_size, default_value = "4M")]
     pub ringbuf_size: usize,
 
+    /// Measure and report data throughput from the ring buffer
+    #[arg(long)]
+    pub throughput: bool,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 
@@ -109,6 +113,7 @@ pub enum Commands {
     Uninstall {},
 }
 
+#[allow(dead_code)]
 pub fn command() -> clap::Command {
     Cli::command()
 }
