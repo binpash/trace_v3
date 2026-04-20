@@ -1,5 +1,5 @@
 #!/bin/sh
-set -x
+set -ex
 
 export PROJ_ROOT="$(git rev-parse --show-toplevel)"
 
