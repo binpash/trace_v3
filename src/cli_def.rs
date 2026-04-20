@@ -99,6 +99,10 @@ pub struct Cli {
     #[arg(long)]
     pub throughput_file: Option<String>,
 
+    /// Throughput sampling interval in seconds (default: 1.0)
+    #[arg(long, default_value = "1.0")]
+    pub throughput_interval: f64,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 

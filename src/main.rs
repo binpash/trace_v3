@@ -322,6 +322,10 @@ fn main() -> Result<()> {
     }
 
     let throughput_start = std::time::Instant::now();
+    let throughput_interval = Duration::from_secs_f64(cli.throughput_interval.max(0.001));
+    let mut last_tick = throughput_start;
+    let mut last_bytes: u64 = 0;
+    let mut last_events: u64 = 0;
 
     while RUNNING.load(Ordering::Relaxed) {
         match rb.poll(Duration::from_micros(25)) {
@@ -368,6 +372,29 @@ fn main() -> Result<()> {
             program_total += diff;
             prev_missed = total;
         };
+
+        if measure_throughput {
+            let tick_elapsed = last_tick.elapsed();
+            if tick_elapsed >= throughput_interval {
+                let now = throughput_start.elapsed().as_secs_f64();
+                let cur_bytes = bytes_received.load(Ordering::Relaxed);
+                let cur_events = events_received.load(Ordering::Relaxed);
+                let delta_bytes = cur_bytes - last_bytes;
+                let delta_events = cur_events - last_events;
+                let interval_secs = tick_elapsed.as_secs_f64();
+                let mb = delta_bytes as f64 / (1024.0 * 1024.0);
+                let mb_per_sec = mb / interval_secs;
+                let events_per_sec = delta_events as f64 / interval_secs;
+                writeln!(
+                    &mut outputs.throughput_file,
+                    "[{now:8.3}s] {mb_per_sec:8.3} MB/s  {events_per_sec:8.0} events/s"
+                )?;
+                outputs.throughput_file.flush()?;
+                last_tick = std::time::Instant::now();
+                last_bytes = cur_bytes;
+                last_events = cur_events;
+            }
+        }
     }
 
     let mut status = MaybeUninit::<c_int>::uninit();
@@ -401,24 +428,17 @@ fn main() -> Result<()> {
         writeln!(&mut outputs.missed_file, "{program_total}")?;
     }
 
-    if cli.throughput {
+    if measure_throughput {
         let elapsed = throughput_start.elapsed().as_secs_f64();
         let total_bytes = bytes_received.load(Ordering::Relaxed);
         let total_events = events_received.load(Ordering::Relaxed);
         let mb = total_bytes as f64 / (1024.0 * 1024.0);
         let mb_per_sec = if elapsed > 0.0 { mb / elapsed } else { 0.0 };
         let events_per_sec = if elapsed > 0.0 { total_events as f64 / elapsed } else { 0.0 };
-        if cli.throughput_file.is_none() {
-            writeln!(
-                &mut outputs.throughput_file,
-                "throughput: {mb:.3} MB in {elapsed:.3}s = {mb_per_sec:.3} MB/s, {total_events} events ({events_per_sec:.0} events/s)"
-            )?;
-        } else {
-            writeln!(
-                &mut outputs.throughput_file,
-                "{mb:.3} {elapsed:.3} {mb_per_sec:.3} {total_events} {events_per_sec:.0}"
-            )?;
-        }
+        writeln!(
+            &mut outputs.throughput_file,
+            "summary: {total_events} events, {mb:.3} MB in {elapsed:.3}s (avg {mb_per_sec:.3} MB/s, {events_per_sec:.0} events/s)"
+        )?;
     }
 
     Ok(())
