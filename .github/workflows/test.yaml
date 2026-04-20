@@ -25,7 +25,8 @@ jobs:
       - name: install deps
         run: |
           sudo apt-get update
-          sudo apt-get install gcc clang llvm libbpf-dev zlib1g-dev libelf-dev autopoint
+          sudo apt-get install gcc clang llvm libbpf-dev zlib1g-dev libelf-dev autopoint pkg-config flex bison
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
           git clone --recurse-submodules https://github.com/libbpf/bpftool.git
           cd bpftool/src
           make
