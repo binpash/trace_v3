@@ -18,6 +18,8 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
       - name: check bpf
         run: |
           cat /boot/config-$(uname -r) | grep BPF
@@ -26,7 +28,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc clang llvm libbpf-dev zlib1g-dev libelf-dev autopoint pkg-config flex bison
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           git clone --recurse-submodules https://github.com/libbpf/bpftool.git
           cd bpftool/src
           make
@@ -40,7 +41,6 @@ jobs:
 
       - name: build and install
         run: |
-          . "$HOME/.cargo/env"
           sudo ./install.sh
           trace_v3 install
 
