@@ -39,7 +39,7 @@ jobs:
 
       - name: build and install
         run: |
-          sudo ./install.sh
+          sudo -E ./install.sh
           trace_v3 install
 
       - name: run tests
