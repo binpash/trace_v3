@@ -37,9 +37,6 @@ jobs:
           which bpftool
           clang --version
 
-      - name: checkout
-        uses: actions/checkout@v4
-
       - name: build and install
         run: |
           sudo ./install.sh
