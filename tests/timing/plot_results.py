@@ -160,14 +160,12 @@ def plot_strace_vs_trace_v3_scatter(results, output_dir):
     max_speedup = max(s / t for s, t in zip(strace_times, trace_v3_times))
 
     speedup_levels = []
-    base = 1
-    while base <= max(10, max_speedup * 2):
-        speedup_levels.extend([base * 2, base * 5, base * 10])
-        base *= 10
+    level = 2
+    while level <= max(16, max_speedup * 2):
+        speedup_levels.append(level)
+        level *= 2
 
     for speedup in speedup_levels:
-        if speedup > max(10, max_speedup * 2):
-            break
         ax.plot(
             [min_val, max_val],
             [min_val / speedup, max_val / speedup],
