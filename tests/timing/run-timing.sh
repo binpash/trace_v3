@@ -3,6 +3,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TRACE="${TRACE:-trace_v3}"
 
 # Set environment variables for benchmark.sh
 export RUNS_BASELINE=100
@@ -47,7 +48,7 @@ run_all_benches() {
     run_bench "grep" "grep -r 'typedef' /usr/include > /dev/null 2>&1"
 
     # 5. Archiving files (Heavy I/O operations)
-    run_bench "tar" "tar -cf /tmp/bench_test.tar /usr/include && rm /tmp/bench_test.tar"
+    WARMUPS=10 run_bench "tar" "tar -cf /tmp/bench_test.tar /usr/include && rm /tmp/bench_test.tar"
 
     # 6. Git clone (Network and heavy file creation/writing)
     RUNS_BASELINE=5 RUNS_TOOL=5 run_bench "git_clone" "git clone --depth 1 https://github.com/git/git.git /tmp/git_bench >/dev/null 2>&1 && rm -rf /tmp/git_bench"
@@ -62,7 +63,7 @@ run_all_benches "no-bpf"
 
 # Run all tests with BPF next
 echo "Installing trace_v3 BPF programs..."
-trace_v3 install
+"$TRACE" install
 echo "trace_v3 BPF programs installed"
 
 run_all_benches "bpf"
