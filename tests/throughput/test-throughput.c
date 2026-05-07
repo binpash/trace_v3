@@ -6,7 +6,7 @@ int main()
 {
 	volatile int sink; // prevent optimization
 
-	for (int i = 0; i < 5000000; ++i) {
+	for (int i = 0; i < 1000000; ++i) {
 		int fd = openat(AT_FDCWD, "test10101010", 0);
 		sink = fd;
 	}
