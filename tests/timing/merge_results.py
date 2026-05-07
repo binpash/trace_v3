@@ -73,11 +73,13 @@ def merge_results(temp_dir, json_output, csv_output, test_name, runs, warmups):
     # Extract results from individual benchmarks
     baseline_json = os.path.join(temp_dir, f"{test_name}_baseline.json")
     strace_json = os.path.join(temp_dir, f"{test_name}_strace.json")
+    bpftrace_json = os.path.join(temp_dir, f"{test_name}_bpftrace.json")
     baseline_bpf_json = os.path.join(temp_dir, f"{test_name}_baseline_bpf.json")
     trace_v3_json = os.path.join(temp_dir, f"{test_name}_trace_v3.json")
 
     results["benchmarks"][test_name]["baseline"] = extract_benchmark(baseline_json, 0)
     results["benchmarks"][test_name]["strace"] = extract_benchmark(strace_json, 0)
+    results["benchmarks"][test_name]["bpftrace"] = extract_benchmark(bpftrace_json, 0)
     results["benchmarks"][test_name]["baseline_bpf"] = extract_benchmark(
         baseline_bpf_json, 0
     )

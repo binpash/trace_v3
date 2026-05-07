@@ -17,16 +17,24 @@ def main():
         if len(sys.argv) > 2
         else os.path.join(script_dir, "output", "throughput_boundary.png")
     )
+    # Optional override of the X-axis column header so we can reuse this
+    # script for both the trace_v3 RingbufSize curve and the bpftrace
+    # PerfRbPages curve.
+    x_label = sys.argv[3] if len(sys.argv) > 3 else "Ringbuffer Size"
+    title = (
+        sys.argv[4]
+        if len(sys.argv) > 4
+        else "Throughput Capacity Boundary by Ringbuffer Size"
+    )
 
     sizes = []
     max_procs = []
 
     with open(input_csv, "r") as f:
         reader = csv.reader(f)
-        # Skip header if it exists (assuming header starts with 'ringbuf' or similar)
         header = next(reader, None)
-        if header and not header[0].lower().startswith("ringbuf"):
-            # If it wasn't a header, process it
+        # Treat the first row as data only if it doesn't look like a header.
+        if header and not header[0].lower().startswith(("ringbuf", "perfrb")):
             sizes.append(header[0])
             max_procs.append(int(header[1]))
 
@@ -52,9 +60,9 @@ def main():
         plt.fill_between(sizes, 0, max_procs, color="green", alpha=0.3)
         plt.fill_between(sizes, max_procs, y_max, color="red", alpha=0.3)
 
-    plt.xlabel("Ringbuffer Size", fontsize=12)
+    plt.xlabel(x_label, fontsize=12)
     plt.ylabel("Max Parallel Processes (No Missed Events)", fontsize=12)
-    plt.title("Throughput Capacity Boundary by Ringbuffer Size", fontsize=14)
+    plt.title(title, fontsize=14)
     plt.grid(True, linestyle="--", alpha=0.7)
 
     plt.tight_layout()

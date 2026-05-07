@@ -25,6 +25,13 @@ STRACE_CMD="strace -q -y -f --seccomp-bpf -e %file,fork,clone,fcntl"
 
 TRACE_V3_CMD="trace_v3 --dep-file /dev/null --trace-file /dev/null --missed-file /dev/null"
 
+# bpftrace contender: bpftrace.bt streams TSV events that post_process.py
+# folds into the same Read/Write summary trace_v3 produces. We discard the
+# summary (--dep-file /dev/null) so the timer measures the full pipeline
+# without I/O for the result file — matches how trace_v3's row is timed.
+BPFTRACE_RUN_SH="${PROJ_ROOT}/tests/bpftrace/run.sh"
+BPFTRACE_CMD="${BPFTRACE_RUN_SH} --dep-file /dev/null --events-file /dev/null --"
+
 # Colors
 if [ -t 1 ]; then
     GREEN='\033[0;32m'
@@ -72,7 +79,7 @@ print_usage() {
 check_dependencies() {
     print_section "Checking dependencies"
 
-    for cmd in hyperfine trace_v3 strace python3; do
+    for cmd in hyperfine trace_v3 strace bpftrace python3; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
             print_error "$cmd not found"
             exit 1
@@ -106,6 +113,11 @@ benchmark_test() {
         hyperfine --min-runs "${RUNS_TOOL}" --warmup "${WARMUPS}" --ignore-failure \
             --export-json "${TEMP_DIR}/${test_name}_strace.json" \
             "${STRACE_CMD} ${command}"
+
+        print_info "Running baseline vs bpftrace+post_process (${RUNS_TOOL} runs)..."
+        hyperfine --min-runs "${RUNS_TOOL}" --warmup "${WARMUPS}" --ignore-failure \
+            --export-json "${TEMP_DIR}/${test_name}_bpftrace.json" \
+            "${BPFTRACE_CMD} sh -c \"${command}\""
     fi
 
     if [ -z "$PHASE" ] || [ "$PHASE" = "bpf" ]; then

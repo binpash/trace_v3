@@ -1,0 +1,312 @@
+// Apples-to-apples bpftrace dependency tracer for the trace_v3 comparison.
+//
+// Hooks the same syscall set that trace_v3 actively handles in dep_tracer.rs
+// (parse_openat / parse_chdir / parse_r_*_path_e1 / parse_w_*_path_e1 / dup /
+// dup3 / pipe2 / renameat[2] / fcntl / clone). Emits one TSV-formatted line
+// per syscall enter and exit, to be consumed by post_process.py which builds
+// the same fd-table + cwd + ancestor-closure model trace_v3 builds in Rust.
+//
+// Usage:
+//   BPFTRACE_STRLEN=4096 bpftrace -B none -c 'CMD ARGS' trace_deps.bt > events.log
+//
+// Output schema (TAB-separated; paths are always last so embedded tabs are
+// preserved through the post-processor's split-with-maxsplit):
+//   E1<tab>syscall<tab>pid<tab>tid<tab>dfd<tab>flags<tab>mode<tab>path
+//   E2<tab>syscall<tab>pid<tab>tid<tab>dfd<tab>dfd2<tab>flags<tab>path1<tab>path2
+//   E0<tab>syscall<tab>pid<tab>tid<tab>fd<tab>fd2<tab>flags<tab>cmd<tab>arg
+//   X<tab>syscall<tab>pid<tab>tid<tab>ret
+//   F<tab>parent_pid<tab>child_pid
+//   T<tab>pid                          (process exit)
+
+BEGIN {
+        @desc[cpid] = 1;
+}
+
+// ---------- process tree -----------------------------------------------------
+
+tracepoint:sched:sched_process_fork
+/@desc[args->parent_pid]/
+{
+        @desc[args->child_pid] = 1;
+        printf("F\t%d\t%d\n", args->parent_pid, args->child_pid);
+}
+
+tracepoint:sched:sched_process_exit
+/@desc[pid]/
+{
+        printf("T\t%d\n", pid);
+        delete(@desc[pid]);
+}
+
+// ---------- one-path read/write syscalls (no dirfd) --------------------------
+
+tracepoint:syscalls:sys_enter_open
+/@desc[pid]/
+{
+        printf("E1\topen\t%d\t%d\t-100\t%d\t0\t%s\n",
+               pid, tid, args->flags, str(args->filename));
+}
+tracepoint:syscalls:sys_exit_open  /@desc[pid]/ { printf("X\topen\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_chdir
+/@desc[pid]/
+{
+        printf("E1\tchdir\t%d\t%d\t-100\t0\t0\t%s\n",
+               pid, tid, str(args->filename));
+}
+tracepoint:syscalls:sys_exit_chdir /@desc[pid]/ { printf("X\tchdir\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_execve
+/@desc[pid]/
+{
+        printf("E1\texecve\t%d\t%d\t-100\t0\t0\t%s\n",
+               pid, tid, str(args->filename));
+}
+tracepoint:syscalls:sys_exit_execve /@desc[pid]/ { printf("X\texecve\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_statfs
+/@desc[pid]/
+{
+        printf("E1\tstatfs\t%d\t%d\t-100\t0\t0\t%s\n",
+               pid, tid, str(args->pathname));
+}
+tracepoint:syscalls:sys_exit_statfs /@desc[pid]/ { printf("X\tstatfs\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_getxattr
+/@desc[pid]/
+{
+        printf("E1\tgetxattr\t%d\t%d\t-100\t0\t0\t%s\n",
+               pid, tid, str(args->pathname));
+}
+tracepoint:syscalls:sys_exit_getxattr /@desc[pid]/ { printf("X\tgetxattr\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_lgetxattr
+/@desc[pid]/
+{
+        printf("E1\tlgetxattr\t%d\t%d\t-100\t0\t0\t%s\n",
+               pid, tid, str(args->pathname));
+}
+tracepoint:syscalls:sys_exit_lgetxattr /@desc[pid]/ { printf("X\tlgetxattr\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_truncate
+/@desc[pid]/
+{
+        printf("E1\ttruncate\t%d\t%d\t-100\t0\t0\t%s\n",
+               pid, tid, str(args->path));
+}
+tracepoint:syscalls:sys_exit_truncate /@desc[pid]/ { printf("X\ttruncate\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_acct
+/@desc[pid]/
+{
+        printf("E1\tacct\t%d\t%d\t-100\t0\t0\t%s\n",
+               pid, tid, str(args->name));
+}
+tracepoint:syscalls:sys_exit_acct /@desc[pid]/ { printf("X\tacct\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+// ---------- one-path read/write syscalls WITH dirfd --------------------------
+
+tracepoint:syscalls:sys_enter_openat
+/@desc[pid]/
+{
+        printf("E1\topenat\t%d\t%d\t%d\t%d\t0\t%s\n",
+               pid, tid, args->dfd, args->flags, str(args->filename));
+}
+tracepoint:syscalls:sys_exit_openat /@desc[pid]/ { printf("X\topenat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_newfstatat
+/@desc[pid]/
+{
+        printf("E1\tnewfstatat\t%d\t%d\t%d\t0\t0\t%s\n",
+               pid, tid, args->dfd, str(args->filename));
+}
+tracepoint:syscalls:sys_exit_newfstatat /@desc[pid]/ { printf("X\tnewfstatat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_statx
+/@desc[pid]/
+{
+        printf("E1\tstatx\t%d\t%d\t%d\t0\t0\t%s\n",
+               pid, tid, args->dfd, str(args->filename));
+}
+tracepoint:syscalls:sys_exit_statx /@desc[pid]/ { printf("X\tstatx\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_name_to_handle_at
+/@desc[pid]/
+{
+        printf("E1\tname_to_handle_at\t%d\t%d\t%d\t0\t0\t%s\n",
+               pid, tid, args->dfd, str(args->name));
+}
+tracepoint:syscalls:sys_exit_name_to_handle_at /@desc[pid]/ { printf("X\tname_to_handle_at\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_readlinkat
+/@desc[pid]/
+{
+        printf("E1\treadlinkat\t%d\t%d\t%d\t0\t0\t%s\n",
+               pid, tid, args->dfd, str(args->pathname));
+}
+tracepoint:syscalls:sys_exit_readlinkat /@desc[pid]/ { printf("X\treadlinkat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_faccessat
+/@desc[pid]/
+{
+        printf("E1\tfaccessat\t%d\t%d\t%d\t0\t0\t%s\n",
+               pid, tid, args->dfd, str(args->filename));
+}
+tracepoint:syscalls:sys_exit_faccessat /@desc[pid]/ { printf("X\tfaccessat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_faccessat2
+/@desc[pid]/
+{
+        printf("E1\tfaccessat2\t%d\t%d\t%d\t%d\t0\t%s\n",
+               pid, tid, args->dfd, args->flags, str(args->filename));
+}
+tracepoint:syscalls:sys_exit_faccessat2 /@desc[pid]/ { printf("X\tfaccessat2\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_execveat
+/@desc[pid]/
+{
+        printf("E1\texecveat\t%d\t%d\t%d\t%d\t0\t%s\n",
+               pid, tid, args->fd, args->flags, str(args->filename));
+}
+tracepoint:syscalls:sys_exit_execveat /@desc[pid]/ { printf("X\texecveat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_unlinkat
+/@desc[pid]/
+{
+        printf("E1\tunlinkat\t%d\t%d\t%d\t%d\t0\t%s\n",
+               pid, tid, args->dfd, args->flag, str(args->pathname));
+}
+tracepoint:syscalls:sys_exit_unlinkat /@desc[pid]/ { printf("X\tunlinkat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_utimensat
+/@desc[pid]/
+{
+        printf("E1\tutimensat\t%d\t%d\t%d\t%d\t0\t%s\n",
+               pid, tid, args->dfd, args->flags, str(args->filename));
+}
+tracepoint:syscalls:sys_exit_utimensat /@desc[pid]/ { printf("X\tutimensat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_mkdirat
+/@desc[pid]/
+{
+        printf("E1\tmkdirat\t%d\t%d\t%d\t0\t%d\t%s\n",
+               pid, tid, args->dfd, args->mode, str(args->pathname));
+}
+tracepoint:syscalls:sys_exit_mkdirat /@desc[pid]/ { printf("X\tmkdirat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_mknodat
+/@desc[pid]/
+{
+        printf("E1\tmknodat\t%d\t%d\t%d\t0\t%d\t%s\n",
+               pid, tid, args->dfd, args->mode, str(args->filename));
+}
+tracepoint:syscalls:sys_exit_mknodat /@desc[pid]/ { printf("X\tmknodat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_fchownat
+/@desc[pid]/
+{
+        printf("E1\tfchownat\t%d\t%d\t%d\t%d\t0\t%s\n",
+               pid, tid, args->dfd, args->flag, str(args->filename));
+}
+tracepoint:syscalls:sys_exit_fchownat /@desc[pid]/ { printf("X\tfchownat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_fchmodat
+/@desc[pid]/
+{
+        printf("E1\tfchmodat\t%d\t%d\t%d\t0\t%d\t%s\n",
+               pid, tid, args->dfd, args->mode, str(args->filename));
+}
+tracepoint:syscalls:sys_exit_fchmodat /@desc[pid]/ { printf("X\tfchmodat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_inotify_add_watch
+/@desc[pid]/
+{
+        printf("E1\tinotify_add_watch\t%d\t%d\t-100\t0\t0\t%s\n",
+               pid, tid, str(args->pathname));
+}
+tracepoint:syscalls:sys_exit_inotify_add_watch /@desc[pid]/ { printf("X\tinotify_add_watch\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_symlinkat
+/@desc[pid]/
+{
+        printf("E1\tsymlinkat\t%d\t%d\t%d\t0\t0\t%s\n",
+               pid, tid, args->newdfd, str(args->newname));
+}
+tracepoint:syscalls:sys_exit_symlinkat /@desc[pid]/ { printf("X\tsymlinkat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+// ---------- two-path syscalls -----------------------------------------------
+
+tracepoint:syscalls:sys_enter_renameat
+/@desc[pid]/
+{
+        printf("E2\trenameat\t%d\t%d\t%d\t%d\t0\t%s\t%s\n",
+               pid, tid, args->olddfd, args->newdfd,
+               str(args->oldname), str(args->newname));
+}
+tracepoint:syscalls:sys_exit_renameat /@desc[pid]/ { printf("X\trenameat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_renameat2
+/@desc[pid]/
+{
+        printf("E2\trenameat2\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+               pid, tid, args->olddfd, args->newdfd, args->flags,
+               str(args->oldname), str(args->newname));
+}
+tracepoint:syscalls:sys_exit_renameat2 /@desc[pid]/ { printf("X\trenameat2\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_linkat
+/@desc[pid]/
+{
+        printf("E2\tlinkat\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+               pid, tid, args->olddfd, args->newdfd, args->flags,
+               str(args->oldname), str(args->newname));
+}
+tracepoint:syscalls:sys_exit_linkat /@desc[pid]/ { printf("X\tlinkat\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+// ---------- fd-only syscalls (no path) --------------------------------------
+
+tracepoint:syscalls:sys_enter_dup
+/@desc[pid]/
+{
+        printf("E0\tdup\t%d\t%d\t%d\t-1\t0\t0\t0\n",
+               pid, tid, args->fildes);
+}
+tracepoint:syscalls:sys_exit_dup /@desc[pid]/ { printf("X\tdup\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_dup2
+/@desc[pid]/
+{
+        printf("E0\tdup2\t%d\t%d\t%d\t%d\t0\t0\t0\n",
+               pid, tid, args->oldfd, args->newfd);
+}
+tracepoint:syscalls:sys_exit_dup2 /@desc[pid]/ { printf("X\tdup2\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_dup3
+/@desc[pid]/
+{
+        printf("E0\tdup3\t%d\t%d\t%d\t%d\t%d\t0\t0\n",
+               pid, tid, args->oldfd, args->newfd, args->flags);
+}
+tracepoint:syscalls:sys_exit_dup3 /@desc[pid]/ { printf("X\tdup3\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+tracepoint:syscalls:sys_enter_fcntl
+/@desc[pid]/
+{
+        printf("E0\tfcntl\t%d\t%d\t%d\t-1\t0\t%d\t%lu\n",
+               pid, tid, args->fd, args->cmd, args->arg);
+}
+tracepoint:syscalls:sys_exit_fcntl /@desc[pid]/ { printf("X\tfcntl\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+// memfd_create produces a virtual path; we just emit the name field and let
+// the post-processor stitch the /memfd:: prefix on the open_file entry.
+tracepoint:syscalls:sys_enter_memfd_create
+/@desc[pid]/
+{
+        printf("E1\tmemfd_create\t%d\t%d\t-100\t%d\t0\t%s\n",
+               pid, tid, args->flags, str(args->uname));
+}
+tracepoint:syscalls:sys_exit_memfd_create /@desc[pid]/ { printf("X\tmemfd_create\t%d\t%d\t%ld\n", pid, tid, args->ret); }
+
+END {
+        clear(@desc);
+}

@@ -28,14 +28,14 @@ def plot_bars(results, test_name, output_dir):
 
     data = results["benchmarks"][test_name]
 
-    # Four scenarios: baseline, strace, baseline_bpf, trace_v3
-    scenarios = ["baseline", "strace", "baseline_bpf", "trace_v3"]
+    # Five scenarios: baseline, strace, bpftrace+post_process, baseline_bpf, trace_v3
+    scenarios = ["baseline", "strace", "bpftrace", "baseline_bpf", "trace_v3"]
     means = [data[s]["mean"] if data.get(s) else 0 for s in scenarios]
     stddevs = [data[s]["stddev"] if data.get(s) else 0 for s in scenarios]
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=(13, 6))
     x = np.arange(len(scenarios))
-    colors = ["#2ecc71", "#e74c3c", "#f39c12", "#3498db"]
+    colors = ["#2ecc71", "#e74c3c", "#9b59b6", "#f39c12", "#3498db"]
     bars = ax.bar(x, means, 0.6, yerr=stddevs, capsize=5, color=colors, alpha=0.8)
 
     ax.set_ylabel("Time (seconds)", fontsize=12)
@@ -50,6 +50,7 @@ def plot_bars(results, test_name, output_dir):
     labels = [
         "Baseline\n(no BPF)",
         "Strace\n(no BPF)",
+        "bpftrace+post\n(no BPF)",
         "Baseline\n(BPF installed)",
         "trace_v3\n(BPF installed)",
     ]
@@ -69,10 +70,18 @@ def plot_bars(results, test_name, output_dir):
     # Calculate and display overheads
     if means[0] > 0:
         strace_oh = (means[1] - means[0]) / means[0] * 100 if means[1] > 0 else 0
-        bpf_oh = (means[2] - means[0]) / means[0] * 100 if means[2] > 0 else 0
-        trace_v3_oh = (means[3] - means[2]) / means[3] * 100 if means[3] > 0 else 0
+        bpftrace_oh = (means[2] - means[0]) / means[0] * 100 if means[2] > 0 else 0
+        bpf_oh = (means[3] - means[0]) / means[0] * 100 if means[3] > 0 else 0
+        trace_v3_oh = (
+            (means[4] - means[3]) / means[4] * 100 if means[4] > 0 and means[3] > 0 else 0
+        )
 
-        overhead_text = f"strace overhead: {strace_oh:+.1f}%\nBPF overhead: {bpf_oh:+.1f}%\ntrace_v3 overhead: {trace_v3_oh:+.1f}%"
+        overhead_text = (
+            f"strace overhead: {strace_oh:+.1f}%\n"
+            f"bpftrace overhead: {bpftrace_oh:+.1f}%\n"
+            f"BPF overhead: {bpf_oh:+.1f}%\n"
+            f"trace_v3 overhead: {trace_v3_oh:+.1f}%"
+        )
         ax.text(
             0.98,
             0.97,
@@ -91,36 +100,34 @@ def plot_bars(results, test_name, output_dir):
     plt.close()
 
 
-def plot_strace_vs_trace_v3_scatter(results, output_dir):
-    """Generate scatter plot comparing strace times vs trace_v3 times"""
+def _scatter_vs_trace_v3(results, output_dir, competitor_key, competitor_label):
+    """Generic log-log scatter: <competitor> time on x, trace_v3 time on y.
 
+    The diagonal is equal performance; isobars below the diagonal mark Nx
+    speedups for trace_v3. We render one PNG per competitor so the
+    strace-vs-trace_v3 plot stays the same and a parallel bpftrace plot drops
+    in next to it without disturbing the existing visual baseline.
+    """
     tests = []
-    strace_times = []
+    competitor_times = []
     trace_v3_times = []
 
     for test_name, data in results["benchmarks"].items():
-        strace_data = data.get("strace")
-        trace_v3_data = data.get("trace_v3")
-
-        if (
-            strace_data
-            and strace_data.get("mean")
-            and trace_v3_data
-            and trace_v3_data.get("mean")
-        ):
+        c = data.get(competitor_key)
+        v = data.get("trace_v3")
+        if c and c.get("mean") and v and v.get("mean"):
             tests.append(test_name)
-            strace_times.append(strace_data["mean"])
-            trace_v3_times.append(trace_v3_data["mean"])
+            competitor_times.append(c["mean"])
+            trace_v3_times.append(v["mean"])
 
     if not tests:
-        print("Warning: No strace/trace_v3 data found for scatter plot")
+        print(f"Warning: No {competitor_key}/trace_v3 data found for scatter plot")
         return
 
     fig, ax = plt.subplots(figsize=(10, 10))
 
-    # Plot data points
     ax.scatter(
-        strace_times,
+        competitor_times,
         trace_v3_times,
         s=100,
         alpha=0.6,
@@ -129,42 +136,36 @@ def plot_strace_vs_trace_v3_scatter(results, output_dir):
         linewidth=1.5,
     )
 
-    # Add labels for each point
-    for test, strace, trace_v3 in zip(tests, strace_times, trace_v3_times):
-        speedup = strace / trace_v3
+    for test, c, v in zip(tests, competitor_times, trace_v3_times):
+        speedup = c / v
         ax.annotate(
             f"{test} ({speedup:.1f}x)",
-            (strace, trace_v3),
+            (c, v),
             xytext=(5, 5),
             textcoords="offset points",
             fontsize=9,
         )
 
-    # Set log scale
     ax.set_xscale("log")
     ax.set_yscale("log")
 
-    # Add diagonal line (equal performance)
-    min_val = min(min(strace_times), min(trace_v3_times)) / 2
-    max_val = max(max(strace_times), max(trace_v3_times)) * 2
+    min_val = min(min(competitor_times), min(trace_v3_times)) / 2
+    max_val = max(max(competitor_times), max(trace_v3_times)) * 2
     ax.plot(
         [min_val, max_val],
         [min_val, max_val],
         "r--",
         linewidth=2,
-        label="Equal time (strace = trace_v3)",
+        label=f"Equal time ({competitor_label} = trace_v3)",
         alpha=0.7,
     )
 
-    # Add logarithmic speedup lines
-    max_speedup = max(s / t for s, t in zip(strace_times, trace_v3_times))
-
+    max_speedup = max(c / v for c, v in zip(competitor_times, trace_v3_times))
     speedup_levels = []
     level = 2
     while level <= max(16, max_speedup * 2):
         speedup_levels.append(level)
         level *= 2
-
     for speedup in speedup_levels:
         ax.plot(
             [min_val, max_val],
@@ -188,39 +189,37 @@ def plot_strace_vs_trace_v3_scatter(results, output_dir):
     ax.set_xlim([min_val, max_val])
     ax.set_ylim([min_val, max_val])
 
-    # Shade regions
     ax.fill_between(
-        [min_val, max_val],
-        [min_val, max_val],
-        max_val,
-        alpha=0.1,
-        color="red",
-        label="strace faster",
+        [min_val, max_val], [min_val, max_val], max_val,
+        alpha=0.1, color="red", label=f"{competitor_label} faster",
     )
     ax.fill_between(
-        [min_val, max_val],
-        [min_val, max_val],
-        min_val,
-        alpha=0.1,
-        color="green",
-        label="trace_v3 faster",
+        [min_val, max_val], [min_val, max_val], min_val,
+        alpha=0.1, color="green", label="trace_v3 faster",
     )
 
-    ax.set_xlabel("Strace Time (seconds)", fontsize=12)
+    ax.set_xlabel(f"{competitor_label} Time (seconds)", fontsize=12)
     ax.set_ylabel("trace_v3 Time (seconds)", fontsize=12)
     ax.set_title(
-        "Strace vs trace_v3 Performance Comparison (Log Scale)",
-        fontsize=14,
-        fontweight="bold",
+        f"{competitor_label} vs trace_v3 Performance Comparison (Log Scale)",
+        fontsize=14, fontweight="bold",
     )
     ax.grid(True, alpha=0.3, linestyle="--", which="both")
     ax.legend(fontsize=10, loc="upper left")
 
     plt.tight_layout()
-    out = os.path.join(output_dir, "scatter_strace_vs_trace_v3.png")
+    out = os.path.join(output_dir, f"scatter_{competitor_key}_vs_trace_v3.png")
     plt.savefig(out, dpi=150, bbox_inches="tight")
     print(f"Saved: {out}")
     plt.close()
+
+
+def plot_strace_vs_trace_v3_scatter(results, output_dir):
+    _scatter_vs_trace_v3(results, output_dir, "strace", "Strace")
+
+
+def plot_bpftrace_vs_trace_v3_scatter(results, output_dir):
+    _scatter_vs_trace_v3(results, output_dir, "bpftrace", "bpftrace+post")
 
 
 def plot_bpf_overhead(results, output_dir):
@@ -327,6 +326,9 @@ def main():
     # Generate scatter plot comparing strace vs trace_v3
     plot_strace_vs_trace_v3_scatter(results, output_dir)
 
+    # Generate scatter plot comparing bpftrace+post vs trace_v3
+    plot_bpftrace_vs_trace_v3_scatter(results, output_dir)
+
     # Generate BPF overhead plot
     plot_bpf_overhead(results, output_dir)
 
@@ -346,7 +348,7 @@ def main():
             else None
         )
 
-        for scenario in ["baseline", "strace", "baseline_bpf", "trace_v3"]:
+        for scenario in ["baseline", "strace", "bpftrace", "baseline_bpf", "trace_v3"]:
             data = scenarios.get(scenario)
             if data and data.get("mean"):
                 if baseline and scenario != "baseline":
@@ -362,22 +364,27 @@ def main():
     print("Performance Comparison:")
     print("=" * 80)
     print(
-        f"\n{'Test':<20} {'Strace (s)':<15} {'trace_v3 (s)':<15} {'Speedup (x)':<12} {'Faster':<10}"
+        f"\n{'Test':<20} {'Strace (s)':<13} {'bpftrace (s)':<14} {'trace_v3 (s)':<14} "
+        f"{'st/v3 (x)':<10} {'bt/v3 (x)':<10}"
     )
-    print("-" * 80)
+    print("-" * 90)
 
     for test_name, data in results["benchmarks"].items():
         strace = data.get("strace")
+        bpftrace = data.get("bpftrace")
         trace_v3 = data.get("trace_v3")
 
-        if strace and strace.get("mean") and trace_v3 and trace_v3.get("mean"):
-            strace_mean = strace["mean"]
-            trace_v3_mean = trace_v3["mean"]
-            speedup = strace_mean / trace_v3_mean
-            faster = "trace_v3" if speedup > 1 else "strace"
-            print(
-                f"{test_name:<20} {strace_mean:>6.3f}s        {trace_v3_mean:>6.3f}s        {speedup:>6.2f}x       {faster:>10}"
-            )
+        if not (trace_v3 and trace_v3.get("mean")):
+            continue
+        v3_mean = trace_v3["mean"]
+        st_mean = strace["mean"] if strace and strace.get("mean") else float("nan")
+        bt_mean = bpftrace["mean"] if bpftrace and bpftrace.get("mean") else float("nan")
+        st_speedup = st_mean / v3_mean if st_mean == st_mean else float("nan")
+        bt_speedup = bt_mean / v3_mean if bt_mean == bt_mean else float("nan")
+        print(
+            f"{test_name:<20} {st_mean:>7.3f}s     {bt_mean:>7.3f}s      "
+            f"{v3_mean:>7.3f}s      {st_speedup:>6.2f}x   {bt_speedup:>6.2f}x"
+        )
 
 
 if __name__ == "__main__":
