@@ -95,17 +95,20 @@ else
     BT_INVOKE="sudo -E bpftrace"
 fi
 
-# Scrub the wrapper from the dep set: trace_v3 execs the target directly,
-# but our bpftrace pipeline goes through /bin/sh + a /tmp wrapper to clear
-# the 0.17 ELF-only and quoting limitations. Excluding the wrapper path
-# keeps the dep set apples-to-apples with trace_v3.
+# Two scrubs to match trace_v3's "execs the workload directly" perspective:
+#   --exclude-prefix kills any dep-set entries that mention the wrapper path
+#   --skip-bootstrap discards events up to the second sys_enter_execve, so
+#                    /bin/sh (the wrapper exec) and its libc/locale opens
+#                    don't leak into deps; the real workload's /bin/sh
+#                    re-loads them after the second execve.
 EXCLUDE_FLAG="--exclude-prefix=$WRAPPER"
+POST_ARGS="--cwd $CWD_AT_RUN --out $DEP_FILE $EXCLUDE_FLAG --skip-bootstrap"
 
 if [ "$EVENTS_FILE" = "/dev/null" ]; then
     $BT_INVOKE -B none -q -c "${CMD_STR}" "$BT_SCRIPT" \
-        | python3 "$POST" - --cwd "$CWD_AT_RUN" --out "$DEP_FILE" "$EXCLUDE_FLAG"
+        | python3 "$POST" - $POST_ARGS
 else
     $BT_INVOKE -B none -q -c "${CMD_STR}" "$BT_SCRIPT" 2>"$BT_ERR" \
         | tee "$EVENTS_FILE" \
-        | python3 "$POST" - --cwd "$CWD_AT_RUN" --out "$DEP_FILE" "$EXCLUDE_FLAG"
+        | python3 "$POST" - $POST_ARGS
 fi

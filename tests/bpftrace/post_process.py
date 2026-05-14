@@ -272,13 +272,49 @@ def parse_event(line):
     return None
 
 
-def process(events_iter, initial_cwd, deps_out, exclude_prefixes=()):
+def process(
+    events_iter,
+    initial_cwd,
+    deps_out,
+    exclude_prefixes=(),
+    skip_bootstrap=False,
+):
+    """Build the dep set from a bpftrace event stream.
+
+    skip_bootstrap=True drops every event up to (and including) the *first*
+    sys_enter_execve, then resumes processing from the second one. This
+    aligns the dep set with trace_v3's: trace_v3 attaches probes to a child
+    that immediately execve's the test command, so its first observable
+    execve is the workload itself. bpftrace + our /bin/sh wrapper has one
+    extra preamble execve (the wrapper invocation) — skipping it removes
+    /bin, /bin/sh, /tmp, and the wrapper's libc reads (which the real
+    /bin/sh re-loads after the second execve anyway).
+    """
     ctx = Context(initial_cwd)
     deps = DepSets()
     pending = {}   # tid -> last enter event (paired with the next exit on same tid)
 
+    execves_seen = 0
+    active = not skip_bootstrap
+
     for ev in events_iter:
         tag = ev["tag"]
+
+        if not active:
+            # Forks during bootstrap are unusual but cheap to track.
+            if tag == "F":
+                ctx.on_fork(ev["parent"], ev["child"])
+                continue
+            if tag.startswith("E") and ev.get("syscall") == "execve":
+                execves_seen += 1
+                if execves_seen >= 2:
+                    active = True
+                    # fall through and process this enter event
+                else:
+                    continue
+            else:
+                continue
+
         if tag == "F":
             ctx.on_fork(ev["parent"], ev["child"])
             continue
@@ -418,14 +454,24 @@ def _apply(ctx, deps, enter, ret):
         return
 
 
+def _path_sort_key(p):
+    """Match Rust's PathBuf::cmp ordering, which compares Components rather
+    than raw bytes. The functional difference shows up at separator
+    boundaries: '/a/b' vs '/a.b' — byte-wise '/a.b' < '/a/b' because '.'
+    (46) < '/' (47), but Rust treats them as ('a','b') vs ('a.b',) and
+    'a' < 'a.b' so '/a/b' < '/a.b'. Splitting into a tuple of components
+    produces the Rust ordering."""
+    return tuple(p.split("/"))
+
+
 def _emit(deps, out):
     """Format identical to dep_tracer.rs::RWSet::dump_sets — Rust prints
     PathBuf with Debug, which renders ascii paths as quoted literals."""
     out.write("Read set\n")
-    for p in sorted(deps.r):
+    for p in sorted(deps.r, key=_path_sort_key):
         out.write(f'"{p}"\n')
     out.write("Write set\n")
-    for p in sorted(deps.w):
+    for p in sorted(deps.w, key=_path_sort_key):
         out.write(f'"{p}"\n')
 
 
@@ -452,6 +498,15 @@ def main():
              "/tmp path so the dep set is comparable to trace_v3, which "
              "execs the target directly without a wrapper.",
     )
+    ap.add_argument(
+        "--skip-bootstrap",
+        action="store_true",
+        help="skip events up to the second sys_enter_execve. The first "
+             "execve in our pipeline is the /bin/sh wrapper invocation "
+             "(an artifact of bpftrace 0.17's ELF-only -c); the second is "
+             "the wrapper's exec of the actual workload. trace_v3 starts "
+             "directly at the equivalent of the second execve.",
+    )
     args = ap.parse_args()
 
     if args.events == "-":
@@ -470,7 +525,13 @@ def main():
             if ev is not None:
                 yield ev
 
-    process(event_stream(), args.cwd, out, exclude_prefixes=args.exclude_prefix)
+    process(
+        event_stream(),
+        args.cwd,
+        out,
+        exclude_prefixes=args.exclude_prefix,
+        skip_bootstrap=args.skip_bootstrap,
+    )
 
     if src is not sys.stdin:
         src.close()
