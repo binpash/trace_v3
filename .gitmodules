@@ -1,3 +1,0 @@
-[submodule "deps/hs"]
-	path = deps/hs
-	url = git@github.com:binpash/hs.git
