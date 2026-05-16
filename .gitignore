@@ -8,6 +8,7 @@
 !*/
 
 !Makefile
+!deps/*
 src/bpf/vmlinux.h
 src/bpf/*.skel.rs
 

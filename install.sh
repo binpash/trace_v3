@@ -3,6 +3,25 @@ set -ex
 
 export PROJ_ROOT="$(git rev-parse --show-toplevel)"
 
+if ! command -v rustup > /dev/null 2>&1; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+    . "$HOME/.cargo/env"
+fi
+
+if ! command -v uv > /dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    . "$HOME/.local/bin/env"
+fi
+
+if ! command -v hyperfine > /dev/null 2>&1; then
+    cargo install hyperfine
+fi
+
+if [ ! -d "${PROJ_ROOT}/.venv" ]; then
+    uv venv "${PROJ_ROOT}/.venv"
+    uv pip install --python "${PROJ_ROOT}/.venv" -r "${PROJ_ROOT}/requirements.txt"
+fi
+
 cargo build --release
 sudo install -o root -m 4755 "${PROJ_ROOT}/target/release/trace_v3" /usr/local/bin/
 
