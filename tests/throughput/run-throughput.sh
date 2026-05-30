@@ -7,7 +7,7 @@ cd "${PROJ_ROOT}/tests/throughput"
 
 cc -O3 -o test-throughput test-throughput.c
 
-TRACE="${TRACE:-trace_v3}"
+TRACE="${TRACE:-fstrace}"
 
 mkdir -p output
 RESULTS_CSV="output/results.csv"

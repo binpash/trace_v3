@@ -3,7 +3,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TRACE="${TRACE:-trace_v3}"
+TRACE="${TRACE:-fstrace}"
 
 # Set environment variables for benchmark.sh
 export RUNS_BASELINE=100
@@ -55,16 +55,16 @@ run_all_benches() {
 }
 
 # Run all tests without BPF first
-echo "Uninstalling trace_v3 BPF programs..."
+echo "Uninstalling fstrace BPF programs..."
 "$TRACE" uninstall || true
-echo "trace_v3 BPF programs uninstalled"
+echo "fstrace BPF programs uninstalled"
 
 run_all_benches "no-bpf"
 
 # Run all tests with BPF next
-echo "Installing trace_v3 BPF programs..."
+echo "Installing fstrace BPF programs..."
 "$TRACE" install
-echo "trace_v3 BPF programs installed"
+echo "fstrace BPF programs installed"
 
 run_all_benches "bpf"
 

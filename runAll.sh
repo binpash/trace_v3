@@ -33,8 +33,8 @@ for cmd in "${CMDS[@]}"; do
   # analyze with trace_v2
   python3 trace_v2.py "dump.txt" > "trace_v2_$i.txt" 2>&1
 
-  # run with trace_v3
-  sudo ./target/debug/trace_v3 sh -c "$cmd" > "trace_v3_$i.txt" 2>&1
+  # run with fstrace
+  sudo ./target/debug/fstrace sh -c "$cmd" > "fstrace_$i.txt" 2>&1
 
   rm "./dump.txt"
 done

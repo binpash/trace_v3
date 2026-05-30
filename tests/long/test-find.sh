@@ -6,7 +6,7 @@ TEST="${PROJ_ROOT}"/tests/long
 
 SCRIPT_NAME=$(basename "$0" .sh)
 
-trace_v3 \
+fstrace \
     --dep-file "${TEST}/${SCRIPT_NAME}.deps" \
     --trace-file "${TEST}/${SCRIPT_NAME}.trace" \
     --missed-file "${TEST}/${SCRIPT_NAME}.missed" \

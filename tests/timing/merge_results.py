@@ -74,14 +74,14 @@ def merge_results(temp_dir, json_output, csv_output, test_name, runs, warmups):
     baseline_json = os.path.join(temp_dir, f"{test_name}_baseline.json")
     strace_json = os.path.join(temp_dir, f"{test_name}_strace.json")
     baseline_bpf_json = os.path.join(temp_dir, f"{test_name}_baseline_bpf.json")
-    trace_v3_json = os.path.join(temp_dir, f"{test_name}_trace_v3.json")
+    fstrace_json = os.path.join(temp_dir, f"{test_name}_fstrace.json")
 
     results["benchmarks"][test_name]["baseline"] = extract_benchmark(baseline_json, 0)
     results["benchmarks"][test_name]["strace"] = extract_benchmark(strace_json, 0)
     results["benchmarks"][test_name]["baseline_bpf"] = extract_benchmark(
         baseline_bpf_json, 0
     )
-    results["benchmarks"][test_name]["trace_v3"] = extract_benchmark(trace_v3_json, 0)
+    results["benchmarks"][test_name]["fstrace"] = extract_benchmark(fstrace_json, 0)
 
     # Clean out any None values if some benchmarks were skipped/failed
     results["benchmarks"][test_name] = {

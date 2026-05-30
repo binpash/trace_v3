@@ -1,5 +1,5 @@
 #!/bin/sh
-# Generic benchmarking script for trace_v3 - POSIX sh compliant
+# Generic benchmarking script for fstrace - POSIX sh compliant
 # Usage: ./benchmark.sh <test_name> "<command>"
 # Example: ./benchmark.sh find "find / >/dev/null 2>&1"
 
@@ -23,7 +23,7 @@ CSV_OUTPUT="${OUTPUT_DIR}/benchmark.csv"
 # Strace flags: -y (fd paths), -f (follow forks), --seccomp-bpf (efficient), -e (event filters)
 STRACE_CMD="strace -q -y -f --seccomp-bpf -e %file,fork,clone,fcntl"
 
-TRACE_V3_CMD="trace_v3 --dep-file /dev/null --trace-file /dev/null --missed-file /dev/null"
+TRACE_V3_CMD="fstrace --dep-file /dev/null --trace-file /dev/null --missed-file /dev/null"
 
 # Colors
 if [ -t 1 ]; then
@@ -64,7 +64,7 @@ print_usage() {
     printf "  %s ls \"ls -R / >/dev/null 2>&1\"\n" "$(basename "$0")"
     printf "\nOptions via Environment Variables:\n"
     printf "  RUNS_BASELINE=100 Number of times to run the baselines (default: 100)\n"
-    printf "  RUNS_TOOL=10      Number of times to run strace/trace_v3 (default: 10)\n"
+    printf "  RUNS_TOOL=10      Number of times to run strace/fstrace (default: 10)\n"
     printf "  WARMUPS=3         Number of warmup runs (default: 3)\n"
     printf "  PHASE             Set to 'no-bpf' or 'bpf' to only run that portion\n"
 }
@@ -72,7 +72,7 @@ print_usage() {
 check_dependencies() {
     print_section "Checking dependencies"
 
-    for cmd in hyperfine trace_v3 strace python3; do
+    for cmd in hyperfine fstrace strace python3; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
             print_error "$cmd not found"
             exit 1
@@ -114,9 +114,9 @@ benchmark_test() {
             --export-json "${TEMP_DIR}/${test_name}_baseline_bpf.json" \
             "${command}"
 
-        print_info "Running trace_v3 (${RUNS_TOOL} runs)..."
+        print_info "Running fstrace (${RUNS_TOOL} runs)..."
         hyperfine --min-runs "${RUNS_TOOL}" --warmup "${WARMUPS}" --ignore-failure \
-            --export-json "${TEMP_DIR}/${test_name}_trace_v3.json" \
+            --export-json "${TEMP_DIR}/${test_name}_fstrace.json" \
             "${TRACE_V3_CMD} ${command}"
     fi
 }
