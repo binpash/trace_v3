@@ -13,7 +13,7 @@ mod hs_trace {
 }
 use hs_trace::*;
 
-const PIN_BASE: &str = "/sys/fs/bpf/trace_v3";
+const PIN_BASE: &str = "/sys/fs/bpf/fstrace";
 
 /// Pin a BPF link idempotently
 fn pin_link(name: &str, link: &mut Option<Link>) -> Result<()> {
@@ -124,9 +124,9 @@ impl Tracer {
         )?;
 
         // 2. Get pinned outer maps
-        let ringbufs = MapHandle::from_pinned_path("/sys/fs/bpf/trace_v3/ringbufs")?;
-        let missed_events = MapHandle::from_pinned_path("/sys/fs/bpf/trace_v3/missed_events")?;
-        let pid_set = MapHandle::from_pinned_path("/sys/fs/bpf/trace_v3/pid_set")?;
+        let ringbufs = MapHandle::from_pinned_path("/sys/fs/bpf/fstrace/ringbufs")?;
+        let missed_events = MapHandle::from_pinned_path("/sys/fs/bpf/fstrace/missed_events")?;
+        let pid_set = MapHandle::from_pinned_path("/sys/fs/bpf/fstrace/pid_set")?;
 
         // 3. Map them via the tracer_pid
         let tracer_pid_bytes = tracer_pid.to_ne_bytes();

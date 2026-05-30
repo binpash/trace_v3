@@ -1,14 +1,14 @@
-.TH TRACE_V3 1 "March 2026" "trace_v3" "User Commands"
+.TH TRACE_V3 1 "March 2026" "fstrace" "User Commands"
 .SH NAME
-trace_v3 \- file dependency tracer using eBPF
+fstrace \- file dependency tracer using eBPF
 .SH SYNOPSIS
-.B trace_v3
+.B fstrace
 [\fIOPTIONS\fR] [\fISUBCOMMAND\fR] -- \fICOMMAND\fR [\fIARGS...\fR]
 .br
-.B trace_v3
+.B fstrace
 [\fIOPTIONS\fR] attach \fIPID\fR
 .SH DESCRIPTION
-\fBtrace_v3\fR traces file dependencies for a command using eBPF. It attaches
+\fBfstrace\fR traces file dependencies for a command using eBPF. It attaches
 to syscall tracepoints and records which files are read and written. It can
 produce summary output at the end of a run and optionally stream events while
 the command is running.
@@ -55,22 +55,22 @@ Attach to an already running process instead of forking a new one.
 .TP
 Trace a command and write outputs to files:
 .br
-\fBtrace_v3 --trace-file out/trace.log --dep-file out/deps.log --missed-file out/missed.txt -- make -j8\fR
+\fBfstrace --trace-file out/trace.log --dep-file out/deps.log --missed-file out/missed.txt -- make -j8\fR
 .TP
 Stream read and write events while also writing summary files:
 .br
-\fBtrace_v3 --mode both --stream-read --stream-write -- make test\fR
+\fBfstrace --mode both --stream-read --stream-write -- make test\fR
 .TP
 Attach to an existing process:
 .br
-\fBtrace_v3 --mode stream attach 12345\fR
+\fBfstrace --mode stream attach 12345\fR
 .SH FILES
 .TP
-\fB/sys/fs/bpf/trace_v3\fR
-Pinned eBPF programs and maps used by trace_v3.
+\fB/sys/fs/bpf/fstrace\fR
+Pinned eBPF programs and maps used by fstrace.
 .SH SEE ALSO
-trace_v3 documentation file (DOCUMENTATION.txt)
+fstrace documentation file (DOCUMENTATION.txt)
 .SH AUTHOR
-trace_v3 contributors
+fstrace contributors
 
 

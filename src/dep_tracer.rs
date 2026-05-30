@@ -9,7 +9,7 @@ use std::path::{Component, PathBuf};
 use std::sync::mpsc;
 use std::sync::Mutex;
 use syscallnrs::syscall_of_nr;
-use trace_v3::*;
+use fstrace::*;
 pub struct StreamCfg {
     pub read_out: Option<Output>,
     pub write_out: Option<Output>,

@@ -27,8 +27,8 @@ use crate::cli::{Cli, Commands, OutputMode, Outputs, StreamOutputs};
 use crate::dep_tracer::{event_stream_handler, SyscallEvent, CTXT, LOGS, SETS};
 use crate::installer::{installer, uninstall, Tracer};
 use crate::utils::{invoker_permissions, resolve_executable};
-use trace_v3::sys_enter_info_t;
-use trace_v3::sys_exit_info_t;
+use fstrace::sys_enter_info_t;
+use fstrace::sys_exit_info_t;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -114,8 +114,6 @@ fn fork_child(cli: &Cli) -> Result<i32> {
 }
 
 fn main() -> Result<()> {
-
-
     let cli = Cli::parse();
     if let Some(Commands::Install {}) = cli.command {
         return installer();
@@ -219,7 +217,7 @@ fn main() -> Result<()> {
     let tracer_pid = unsafe { libc::getpid() };
     let tracer_pid_buf = &tracer_pid.to_ne_bytes();
     let tracer = Tracer::new(tracer_pid, cli.ringbuf_size)
-        .context("Failed to initialize tracer. Did you run `trace_v3 install`?")?;
+        .context("Failed to initialize tracer. Did you run `fstrace install`?")?;
 
     // update the pid_set for tracer
     let tracee_pid_buf = &tracee_pid.to_ne_bytes();
@@ -442,7 +440,11 @@ fn main() -> Result<()> {
         let total_events = events_received.load(Ordering::Relaxed);
         let mb = total_bytes as f64 / (1024.0 * 1024.0);
         let mb_per_sec = if elapsed > 0.0 { mb / elapsed } else { 0.0 };
-        let events_per_sec = if elapsed > 0.0 { total_events as f64 / elapsed } else { 0.0 };
+        let events_per_sec = if elapsed > 0.0 {
+            total_events as f64 / elapsed
+        } else {
+            0.0
+        };
         writeln!(
             &mut outputs.throughput_file,
             "summary: {total_events} events, {mb:.3} MB in {elapsed:.3}s (avg {mb_per_sec:.3} MB/s, {events_per_sec:.0} events/s)"

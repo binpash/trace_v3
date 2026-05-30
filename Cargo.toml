@@ -1,5 +1,5 @@
 [package]
-name = "trace_v3"
+name = "fstrace"
 version = "0.1.0"
 edition = "2021"
 

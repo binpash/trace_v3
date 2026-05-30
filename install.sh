@@ -23,11 +23,11 @@ if [ ! -d "${PROJ_ROOT}/.venv" ]; then
 fi
 
 cargo build --release
-sudo install -o root -m 4755 "${PROJ_ROOT}/target/release/trace_v3" /usr/local/bin/
+sudo install -o root -m 4755 "${PROJ_ROOT}/target/release/fstrace" /usr/local/bin/
 
-MAN_SRC="$(find "${PROJ_ROOT}/target" -path '*/out/trace_v3.1' | head -n1)"
+MAN_SRC="$(find "${PROJ_ROOT}/target" -path '*/out/fstrace.1' | head -n1)"
 
 sudo mkdir -p /usr/local/share/man/man1
-sudo install -o root -m 0644 "$MAN_SRC" /usr/local/share/man/man1/trace_v3.1
+sudo install -o root -m 0644 "$MAN_SRC" /usr/local/share/man/man1/fstrace.1
 
 sudo mandb

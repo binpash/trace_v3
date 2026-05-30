@@ -1,7 +1,7 @@
-trace_v3 - File Dependency Tracing
+fstrace - File Dependency Tracing
 
 
-trace_v3 is a Linux file dependency tracing tool built on eBPF. It attaches to
+fstrace is a Linux file dependency tracing tool built on eBPF. It attaches to
 syscall tracepoints and records which files a command reads and writes. It can
 produce a summary of dependencies at the end of a run and optionally stream
 events while the command is running.
@@ -20,30 +20,30 @@ From the project root:
    cargo build -r
 
    This creates:
-   target/release/trace_v3
+   target/release/fstrace
 
 2) Install the binary as setuid root:
    sudo ./install.sh
 
-   This installs trace_v3 to /usr/local/bin/ owned by root with mode 4755.
+   This installs fstrace to /usr/local/bin/ owned by root with mode 4755.
 
 3) Load and pin the eBPF programs and maps (later runs
    reuse these pinned maps/programs instead of reinstalling them):
-   sudo trace_v3 install
+   sudo fstrace install
 
 
 3. Basic Usage
 General form:
-   trace_v3 Subcommands -- <command> args
+   fstrace Subcommands -- <command> args
 
 Trace a new command:
-   trace_v3 -- command args
+   fstrace -- command args
 
 Example:
-   trace_v3 -- ls -R /etc
+   fstrace -- ls -R /etc
 
 Attach to an existing process:
-   trace_v3 attach pid
+   fstrace attach pid
 
 
 Subcommands:
@@ -52,7 +52,7 @@ Subcommands:
 
 
 4. Output Files
-trace_v3 can write three kinds of outputs (each takes "-" for stdout or a path):
+fstrace can write three kinds of outputs (each takes "-" for stdout or a path):
 
 
 5. Streaming Options

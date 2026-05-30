@@ -252,6 +252,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8591b0bcc8a98a64310a2fae1bb3e9b8564dd10e381e6e28010fde8e8e8568db"
 
 [[package]]
+name = "fstrace"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bindgen",
+ "clap",
+ "clap_mangen",
+ "libbpf-cargo",
+ "libbpf-rs",
+ "libbpf-sys",
+ "libc",
+ "nix",
+ "num_cpus",
+ "once_cell",
+ "plain",
+ "syscallnrs",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -650,25 +669,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "trace_v3"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bindgen",
- "clap",
- "clap_mangen",
- "libbpf-cargo",
- "libbpf-rs",
- "libbpf-sys",
- "libc",
- "nix",
- "num_cpus",
- "once_cell",
- "plain",
- "syscallnrs",
 ]
 
 [[package]]

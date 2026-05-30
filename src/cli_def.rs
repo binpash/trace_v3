@@ -39,10 +39,10 @@ pub enum OutputMode {
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "trace_v3",
+    name = "fstrace",
     arg_required_else_help = true,
     about = "File dependency tracer using eBPF",
-    long_about = "trace_v3 traces file dependencies for a command using eBPF. \
+    long_about = "fstrace traces file dependencies for a command using eBPF. \
 It attaches to syscall tracepoints and records which files are read and written. \
 It can produce summary output at the end of a run and optionally stream events while the command is running."
 )]

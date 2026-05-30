@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let man = clap_mangen::Man::new(cmd);
     let mut buffer = Vec::new();
     man.render(&mut buffer)?;
-    std::fs::write(out_dir.join("trace_v3.1"), buffer)?;
+    std::fs::write(out_dir.join("fstrace.1"), buffer)?;
 
     println!("cargo::rerun-if-changed=src/cli_def.rs");
     println!("cargo::rerun-if-env-changed=BUFF_SIZE");
