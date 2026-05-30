@@ -91,7 +91,15 @@ fn fork_child(cli: &Cli) -> Result<i32> {
             let (uid, gid) = invoker_permissions()?;
             let target_uid = Uid::from_raw(uid);
             let target_gid = Gid::from_raw(gid);
-            setgroups(&[]).expect("setgroups");
+            // Inside an unprivileged user namespace (e.g. `try`'s
+            // `unshare --user`), setgroups(2) is unconditionally EPERM
+            // regardless of effective capabilities — the kernel locks it off
+            // when /proc/self/setgroups is "deny". No supplementary groups
+            // exist to drop in that environment, so treat EPERM as a no-op.
+            match setgroups(&[]) {
+                Ok(()) | Err(nix::errno::Errno::EPERM) => {}
+                Err(e) => panic!("setgroups: {e}"),
+            }
             setresgid(target_gid, target_gid, target_gid).expect("setresgid");
             setresuid(target_uid, target_uid, target_uid).expect("setresuid");
 
