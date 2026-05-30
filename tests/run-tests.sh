@@ -40,26 +40,26 @@ print_error() {
 # --- Initialization ---
 export PROJ_ROOT="$(git rev-parse --show-toplevel)"
 
-# Ensure trace_v3 is available in PATH
-if ! command -v trace_v3 >/dev/null 2>&1; then
-    print_error "trace_v3 could not be found in PATH."
+# Ensure fstrace is available in PATH
+if ! command -v fstrace >/dev/null 2>&1; then
+    print_error "fstrace could not be found in PATH."
     print_info "Attempting to build and install with Cargo..."
     (cd "$PROJ_ROOT" && cargo install --path .)
 fi
 
-export TRACE=$(command -v trace_v3)
+export TRACE=$(command -v fstrace)
 
 # --- Setup eBPF Programs ---
 print_header "SETUP"
-print_info "Ensuring trace_v3 eBPF programs are installed..."
+print_info "Ensuring fstrace eBPF programs are installed..."
 
 # Uninstall first to ensure clean state, mirroring benchmark script behavior
 "$TRACE" uninstall || true
 
 if "$TRACE" install; then
-    print_success "trace_v3 eBPF programs installed successfully."
+    print_success "fstrace eBPF programs installed successfully."
 else
-    print_error "Failed to install trace_v3 eBPF programs. Make sure you have the necessary privileges."
+    print_error "Failed to install fstrace eBPF programs. Make sure you have the necessary privileges."
     exit 1
 fi
 

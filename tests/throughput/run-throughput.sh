@@ -17,7 +17,9 @@ echo "RingbufSize,Procs,EventsPerSec,Missed,Phase" > "$RESULTS_CSV"
 
 SIZES=("128K" "256K" "512K" "1M" "2M" "4M" "8M")
 MAX_PROCS=$(( $(nproc) * 2 ))
+NUM_SWEEPS="${NUM_SWEEPS:-5}"
 echo "Max parallel processes: $MAX_PROCS (2x $(nproc) CPUs)"
+echo "Sweeps per boundary: $NUM_SWEEPS"
 
 # Run trace with given procs; sets globals: missed, eps
 run_once() {
@@ -73,18 +75,18 @@ for size in "${SIZES[@]}"; do
         fi
     done
 
-    # Sequential sweep of the uncertain range between lo and hi
-    sweep_lo=$(( lo + 1 ))
-    sweep_hi=$(( hi - 1 ))
+    # Sweep the boundary range including lo and hi endpoints
+    sweep_lo=$lo
+    sweep_hi=$hi
     [ "$sweep_lo" -lt 1 ] && sweep_lo=1
     [ "$sweep_hi" -gt "$MAX_PROCS" ] && sweep_hi=$MAX_PROCS
 
-    if [ "$sweep_lo" -le "$sweep_hi" ]; then
-        echo "  Sequential sweep: $sweep_lo to $sweep_hi"
+    echo "  Sweeping boundary: $sweep_lo to $sweep_hi ($NUM_SWEEPS times)"
+    for sweep in $(seq 1 "$NUM_SWEEPS"); do
         for p in $(seq "$sweep_lo" "$sweep_hi"); do
             run_once "$size" "$p" "sweep"
         done
-    fi
+    done
 done
 
 echo ""

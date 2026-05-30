@@ -37,7 +37,6 @@ def main():
                 "procs": int(row["Procs"]),
                 "eps": float(row["EventsPerSec"]),
                 "missed": int(row["Missed"]),
-                "phase": row["Phase"],
             })
 
     seen = set()
@@ -65,41 +64,24 @@ def main():
     fig, ax = plt.subplots(figsize=(10, 6))
     x = np.arange(len(sizes))
 
-    boundary_vals = [boundaries[s] for s in sizes]
     all_procs = [r["procs"] for r in rows]
+    boundary_vals = [boundaries[s] for s in sizes]
     y_max = max(max(all_procs) + 2, max(boundary_vals) + 2) if rows else 10
-
-    ax.bar(x, boundary_vals, width=0.6, color="green", alpha=0.4, zorder=1)
 
     rng = np.random.default_rng(42)
     for r in rows:
         xi = sizes.index(r["size"])
         jitter = rng.uniform(-0.2, 0.2)
         color = "#2ca02c" if r["missed"] == 0 else "#d62728"
-        marker = "o" if r["phase"] == "sweep" else "^"
         ax.scatter(
             xi + jitter, r["procs"],
-            color=color, marker=marker, s=60,
+            color=color, marker="o", s=60,
             zorder=3, alpha=0.85, edgecolors="white", linewidths=0.5,
         )
 
-    for i, size in enumerate(sizes):
-        ok_eps = [r["eps"] for r in rows if r["size"] == size and r["missed"] == 0]
-        if ok_eps:
-            ax.annotate(
-                fmt_eps(max(ok_eps)),
-                xy=(i, boundaries[size]),
-                xytext=(0, 8),
-                textcoords="offset points",
-                ha="center",
-                fontsize=9,
-            )
-
     legend_elements = [
-        Line2D([0], [0], marker="o", color="w", markerfacecolor="#2ca02c", markersize=8, label="Sweep: no misses"),
-        Line2D([0], [0], marker="o", color="w", markerfacecolor="#d62728", markersize=8, label="Sweep: missed events"),
-        Line2D([0], [0], marker="^", color="w", markerfacecolor="#2ca02c", markersize=8, label="Binary: no misses"),
-        Line2D([0], [0], marker="^", color="w", markerfacecolor="#d62728", markersize=8, label="Binary: missed events"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="#2ca02c", markersize=8, label="No misses"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="#d62728", markersize=8, label="Missed events"),
     ]
     ax.legend(handles=legend_elements, loc="upper left", fontsize=9)
 
