@@ -993,15 +993,20 @@ fn parse_renameat(
 fn emit_rw(s_cfg: &mut Option<StreamCfg>, kind: AccessKind, p: &PathBuf) {
     let Some(cfg) = s_cfg.as_mut() else { return };
 
+    // Flush after every line: the scheduler tails these files live to detect
+    // conflicts while the command runs. Without the flush the BufWriter only
+    // hands data to the file at exit, so streaming never actually streams.
     match kind {
         AccessKind::Read => {
             if let Some(out) = cfg.read_out.as_mut() {
                 let _ = writeln!(out, "{}", p.display());
+                let _ = out.flush();
             }
         }
         AccessKind::Write => {
             if let Some(out) = cfg.write_out.as_mut() {
                 let _ = writeln!(out, "{}", p.display());
+                let _ = out.flush();
             }
         }
     }
