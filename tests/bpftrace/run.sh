@@ -34,14 +34,14 @@ if [ $# -eq 0 ]; then
     exit 2
 fi
 
-# bpftrace 0.17 keeps strings on the 512-byte BPF stack. Probes that read
-# *two* paths (linkat, renameat[2]) blow the stack with STRLEN=200 (≥400 B
-# of strings alone, plus probe locals and printf scratch). Cap at 100 so the
-# two-path probes load — this is the apples-to-oranges asymmetry vs trace_v3
-# (which uses PATH_MAX dynptr scratch-maps) we should call out in the writeup.
-# Newer bpftrace (>= 0.18) replaced stack strings with per-cpu arrays and
-# doesn't have this constraint.
-export BPFTRACE_STRLEN="${BPFTRACE_STRLEN:-100}"
+# bpftrace stores strings on the 512-byte BPF stack (iovisor/bpftrace#305),
+# and the two-path probes (renameat/linkat) are the binding constraint:
+# empirically 140 is the ceiling on 0.20 — 160 fails verifier with "BPF
+# stack limit exceeded" on sys_enter_renameat. trace_v3 uses PATH_MAX
+# dynptr scratch-maps, so paths >140 B truncate on the bpftrace leg only;
+# call this out as a known asymmetry in the writeup.
+export BPFTRACE_MAX_STRLEN="${BPFTRACE_MAX_STRLEN:-140}"
+export BPFTRACE_STRLEN="${BPFTRACE_STRLEN:-140}"
 export BPFTRACE_PERF_RB_PAGES="${BPFTRACE_PERF_RB_PAGES:-1024}"
 export BPFTRACE_MAP_KEYS_MAX="${BPFTRACE_MAP_KEYS_MAX:-65536}"
 
@@ -95,17 +95,21 @@ else
     BT_INVOKE="sudo -E bpftrace"
 fi
 
-# Scrub the wrapper from the dep set: trace_v3 execs the target directly,
-# but our bpftrace pipeline goes through /bin/sh + a /tmp wrapper to clear
-# the 0.17 ELF-only and quoting limitations. Excluding the wrapper path
-# keeps the dep set apples-to-apples with trace_v3.
-EXCLUDE_FLAG="--exclude-prefix=$WRAPPER"
+# Scrub the wrapper *and* the shell binary the wrapper invokes from the dep
+# set. trace_v3 execs the target directly; our bpftrace pipeline goes
+# through /bin/sh + a /tmp wrapper to clear the 0.17 ELF-only and quoting
+# limitations, so the wrapper path itself plus /bin/sh and its loader-
+# touched ancestors are extra noise the trace_v3 leg doesn't see. Excluding
+# at insert time (post_process.py) means ancestors of these paths (e.g.
+# /tmp, /bin) also don't pollute the read set unless the real workload
+# touches them independently.
+EXCLUDE_FLAGS="--exclude-prefix=$WRAPPER --exclude-prefix=/bin/sh"
 
 if [ "$EVENTS_FILE" = "/dev/null" ]; then
     $BT_INVOKE -B none -q -c "${CMD_STR}" "$BT_SCRIPT" \
-        | python3 "$POST" - --cwd "$CWD_AT_RUN" --out "$DEP_FILE" "$EXCLUDE_FLAG"
+        | python3 "$POST" - --cwd "$CWD_AT_RUN" --out "$DEP_FILE" $EXCLUDE_FLAGS
 else
     $BT_INVOKE -B none -q -c "${CMD_STR}" "$BT_SCRIPT" 2>"$BT_ERR" \
         | tee "$EVENTS_FILE" \
-        | python3 "$POST" - --cwd "$CWD_AT_RUN" --out "$DEP_FILE" "$EXCLUDE_FLAG"
+        | python3 "$POST" - --cwd "$CWD_AT_RUN" --out "$DEP_FILE" $EXCLUDE_FLAGS
 fi

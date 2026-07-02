@@ -40,10 +40,21 @@ for pages in "${PAGES[@]}"; do
         # post-processor isn't on the critical path for the kernel→userspace
         # capture-rate question this test asks.
         bt_stderr=$(mktemp)
+        # STRLEN matches BT_DIR/run.sh (140, the empirical bpftrace stack-
+        # string ceiling — see comment there). trace_v3 uses PATH_MAX so
+        # its per-event payload is larger; this under-counts bpftrace
+        # per-event bandwidth and biases the drop boundary in bpftrace's
+        # favor — flag in the writeup.
+        # bpftrace -c requires an ELF binary (the executable check rejects
+        # shebang scripts) so wrap in /bin/sh exactly like BT_DIR/run.sh
+        # does. Both legs run the same workload — the bpftrace leg pays
+        # this extra sh fork on top, but it's outside the steady-state
+        # event-rate hot loop so it doesn't affect the drop boundary.
         BPFTRACE_PERF_RB_PAGES="$pages" \
-        BPFTRACE_STRLEN=64 \
+        BPFTRACE_MAX_STRLEN=140 \
+        BPFTRACE_STRLEN=140 \
             sudo -E bpftrace -B none -q \
-                -c "./run-test.sh $procs" \
+                -c "/bin/sh $(pwd)/run-test.sh $procs" \
                 "${BT_DIR}/trace_deps.bt" \
                 >/dev/null 2>"$bt_stderr"
 

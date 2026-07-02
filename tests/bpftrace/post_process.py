@@ -159,21 +159,37 @@ def _normalize(path):
 
 
 class DepSets:
-    def __init__(self):
+    def __init__(self, exclude_prefixes=()):
         self.r = set()
         self.w = set()
+        self.exclude_prefixes = tuple(exclude_prefixes)
+
+    def _excluded(self, p):
+        return any(p.startswith(x) for x in self.exclude_prefixes)
 
     def add_read(self, p):
+        # Filter at insert time, not after ancestor closure: dropping a leaf
+        # post-hoc still leaves its ancestors polluting the read set (e.g.
+        # excluding /tmp/bpftrace_wrapper.XYZ would keep /tmp as a phantom
+        # ancestor). Filter the leaf and skip its ancestors entirely.
+        if self._excluded(p):
+            return
         if p in self.r:
             return
         self.r.add(p)
         for anc in _ancestors(p):
+            if self._excluded(anc):
+                continue
             self.r.add(anc)
 
     def add_write(self, p):
+        if self._excluded(p):
+            return
         if p not in self.w:
             self.w.add(p)
         for anc in _ancestors(p):
+            if self._excluded(anc):
+                continue
             self.r.add(anc)
 
 
@@ -274,7 +290,7 @@ def parse_event(line):
 
 def process(events_iter, initial_cwd, deps_out, exclude_prefixes=()):
     ctx = Context(initial_cwd)
-    deps = DepSets()
+    deps = DepSets(exclude_prefixes)
     pending = {}   # tid -> last enter event (paired with the next exit on same tid)
 
     for ev in events_iter:
@@ -293,10 +309,6 @@ def process(events_iter, initial_cwd, deps_out, exclude_prefixes=()):
             if enter is None or enter["syscall"] != ev["syscall"]:
                 continue
             _apply(ctx, deps, enter, ev["ret"])
-
-    if exclude_prefixes:
-        deps.r = {p for p in deps.r if not any(p.startswith(x) for x in exclude_prefixes)}
-        deps.w = {p for p in deps.w if not any(p.startswith(x) for x in exclude_prefixes)}
 
     _emit(deps, deps_out)
 

@@ -49,8 +49,15 @@ trace_v3 \
     --events-file "${TEST_OUTPUT}/bpftrace.events" \
     -- "${TEST_SCRIPT}" >"${TEST_OUTPUT}/bpftrace.stdout" 2>"${TEST_OUTPUT}/bpftrace.stderr"
 
-# The two pipelines emit identical formats so a unified diff is the report.
-if diff -u "${TEST_OUTPUT}/trace_v3.deps" "${TEST_OUTPUT}/bpftrace.deps" >"${TEST_OUTPUT}/diff"; then
+# Both sides emit "Read set"/"Write set" header lines and sort their entries
+# internally — but Rust's PathBuf ordering treats "/" as lower than "." while
+# Python's sorted() is byte-wise (".." < "/"). The set *contents* are what we
+# care about, not the listing order, so canonicalize with byte-sort before
+# diffing.
+sort "${TEST_OUTPUT}/trace_v3.deps" > "${TEST_OUTPUT}/trace_v3.deps.sorted"
+sort "${TEST_OUTPUT}/bpftrace.deps" > "${TEST_OUTPUT}/bpftrace.deps.sorted"
+
+if diff -u "${TEST_OUTPUT}/trace_v3.deps.sorted" "${TEST_OUTPUT}/bpftrace.deps.sorted" >"${TEST_OUTPUT}/diff"; then
     echo "PASS: dep sets match (${TEST_OUTPUT})"
     exit 0
 fi
