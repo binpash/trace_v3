@@ -334,7 +334,12 @@ fn main() -> Result<()> {
     let mut last_events: u64 = 0;
 
     while RUNNING.load(Ordering::Relaxed) {
-        match rb.poll(Duration::from_micros(25)) {
+        // Keep this timeout >= 1ms: libbpf-rs truncates the Duration to whole
+        // milliseconds, so sub-millisecond values become 0 and busy-spin at
+        // 100% CPU. epoll_wait is never restarted by SA_RESTART, so SIGCHLD
+        // interrupts the poll immediately and RUNNING is rechecked; events
+        // are also delivered as they arrive, so this adds no stream latency.
+        match rb.poll(Duration::from_millis(100)) {
             Ok(()) => {}
             Err(_) => {}
         }
@@ -405,6 +410,27 @@ fn main() -> Result<()> {
 
     let mut status = MaybeUninit::<c_int>::uninit();
     unsafe { if waitpid(tracee_pid, status.as_mut_ptr(), 0) != tracee_pid {} }
+
+    // The loop above stops as soon as SIGCHLD fires, but events from the
+    // tracee's final syscalls — its last writes — may still sit in the ring
+    // buffer. Drain them before shutting down the stream handler, otherwise
+    // those dependencies are silently lost.
+    let _ = rb.consume();
+
+    // Fold in misses recorded since the last in-loop check so the missed
+    // count reflects the complete run — the scheduler resets speculation
+    // based on this value.
+    if let Some(count_per_cpu) = tracer.missed.lookup_percpu(&key, MapFlags::ANY)? {
+        let mut total = 0;
+        for missed in count_per_cpu {
+            let slice = &missed[..size_of::<u32>()];
+            let bytes: [u8; 4] = slice
+                .try_into()
+                .expect("missed_events entry was not exactly 4 bytes");
+            total += u32::from_ne_bytes(bytes);
+        }
+        program_total += total - prev_missed;
+    }
 
     // remove pid from map
     tracer.pid_set.lookup_and_delete(tracee_pid_buf)?;
