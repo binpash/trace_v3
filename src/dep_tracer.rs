@@ -691,6 +691,12 @@ enum AccessKind {
 }
 
 fn parse_fcntl(ctxt: &mut Context, pid_tgid: u64, ret: i64, fd: i32, cmd: u64, arg: u64) {
+    // A failed fcntl can't change fd state, and may reference an fd that was
+    // never opened (e.g. bash probes fcntl(255, F_GETFD) -> EBADF at script
+    // startup before dup'ing the script fd there).
+    if ret < 0 {
+        return;
+    }
     match cmd as i32 {
         libc::F_DUPFD => parse_dup(ctxt, pid_tgid, ret, fd),
         libc::F_DUPFD_CLOEXEC => ctxt.dup_file(pid_tgid, fd, ret as i32, libc::FD_CLOEXEC as u32),
