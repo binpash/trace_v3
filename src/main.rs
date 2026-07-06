@@ -3,7 +3,7 @@ use clap::Parser;
 use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
 use libc::{
     c_int, kill, sigaction, sigemptyset, sighandler_t, waitpid, SA_NOCLDSTOP, SA_RESTART, SIGCHLD,
-    SIGCONT, SIGINT, SIGSTOP,
+    SIGCONT, SIGINT, SIGKILL, SIGSTOP, SIGTERM, WNOHANG,
 };
 use nix::unistd::{setgroups, setresgid, setresuid, Gid, Uid};
 use std::ffi::CStr;
@@ -33,12 +33,18 @@ use fstrace::sys_exit_info_t;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 static RUNNING: AtomicBool = AtomicBool::new(true);
+static TERM_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn sigchld_handler(_sig: i32) {
     RUNNING.store(false, Ordering::Relaxed);
 }
 
 extern "C" fn sigint_handler(_sig: i32) {
+    RUNNING.store(false, Ordering::Relaxed);
+}
+
+extern "C" fn sigterm_handler(_sig: i32) {
+    TERM_REQUESTED.store(true, Ordering::Relaxed);
     RUNNING.store(false, Ordering::Relaxed);
 }
 
@@ -185,6 +191,21 @@ fn main() -> Result<()> {
             Err(Error::new(
                 ErrorKind::Other,
                 "couldn't register sigint handler",
+            ))?
+        }
+
+        // SIGTERM must not take the default terminate action: dying
+        // mid-flight would leak this tracer's pid_set / ringbufs /
+        // missed_events slots until the next `fstrace install`. Instead we
+        // exit the poll loop and run the normal drain-and-cleanup path below.
+        sa.sa_sigaction = sigterm_handler as *const () as sighandler_t;
+        sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+        sigemptyset(&mut sa.sa_mask);
+
+        if sigaction(SIGTERM, &sa, ptr::null_mut()) == -1 {
+            Err(Error::new(
+                ErrorKind::Other,
+                "couldn't register sigterm handler",
             ))?
         }
     }
@@ -409,6 +430,28 @@ fn main() -> Result<()> {
     }
 
     let mut status = MaybeUninit::<c_int>::uninit();
+
+    // On SIGTERM, make sure the tracee goes down with us: forward the TERM so
+    // it can exit gracefully, and only escalate to SIGKILL if it does not exit
+    // within the grace period. Either way the tracee is gone before the
+    // cleanup below runs, so the blocking waitpid cannot hang.
+    if TERM_REQUESTED.load(Ordering::Relaxed) && !attach_to_existing_proc {
+        unsafe { kill(tracee_pid, SIGTERM) };
+        let deadline = std::time::Instant::now() + Duration::from_millis(500);
+        let mut tracee_done = false;
+        while std::time::Instant::now() < deadline {
+            // > 0 means reaped here; -1 means it was already reaped elsewhere.
+            if unsafe { waitpid(tracee_pid, status.as_mut_ptr(), WNOHANG) } != 0 {
+                tracee_done = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        if !tracee_done {
+            unsafe { kill(tracee_pid, SIGKILL) };
+        }
+    }
+
     unsafe { if waitpid(tracee_pid, status.as_mut_ptr(), 0) != tracee_pid {} }
 
     // The loop above stops as soon as SIGCHLD fires, but events from the

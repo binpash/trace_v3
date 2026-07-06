@@ -6,7 +6,7 @@
 #endif
 
 #ifndef RINGBUF_MAX_COUNT
-#define RINGBUF_MAX_COUNT 16
+#define RINGBUF_MAX_COUNT 64
 #endif
 
 struct unique_file_t {
