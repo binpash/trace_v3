@@ -578,6 +578,18 @@ fn on_event_update_rw_sets(event: SyscallInfo, s_cfg: &mut Option<StreamCfg>) {
             path2,
         } => match syscall_nr {
             libc::SYS_dup3 => parse_dup23(&mut ctxt, pid_tgid, ret, flags, fd, fd2),
+            // dup2 only exists on architectures with the legacy syscall table
+            // (on arm64, glibc routes dup2() through dup3). Missing this arm
+            // means the duplicated fd never enters the fd table, and a later
+            // successful fcntl on it (e.g. bash's F_SETFD after moving its
+            // script fd to 255) panics in set_fd_flags. Unlike dup3, dup2
+            // carries no flags and old_fd == new_fd is a successful no-op.
+            #[cfg(target_arch = "x86_64")]
+            libc::SYS_dup2 => {
+                if fd != fd2 {
+                    parse_dup23(&mut ctxt, pid_tgid, ret, 0, fd, fd2)
+                }
+            }
             // libc::SYS_link => {}
             // libc::SYS_rename => {}
             libc::SYS_renameat | libc::SYS_renameat2 => {
