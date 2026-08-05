@@ -470,12 +470,20 @@ BPF_PROG(hs_trace_process_fork, struct task_struct *parent,
 	           p_pid, c_pid);
 	// bpf_printk("update pid set with %d\n", c_pid);
 
-	void *ringbuf = bpf_map_lookup_elem(&ringbufs, tracer_pid_for_parent);
+	// Fork events are reported even while suppressed. The userspace tracer
+	// builds a process's fd table by copying its parent's when it sees the
+	// fork, so withholding these would leave the traced program — created by a
+	// wrapper long before the exec marker — with no parent state to inherit.
+	// Only the file events themselves wait for the marker, and forks are a
+	// handful of events per run rather than the thousands the marker exists to
+	// avoid. The suppress bit must be masked off to get the ringbufs key.
+	u32 clean_tracer_pid = *tracer_pid_for_parent & ~FSTRACE_SUPPRESS_BIT;
+	void *ringbuf = bpf_map_lookup_elem(&ringbufs, &clean_tracer_pid);
 	if (ringbuf == NULL) {
 		return 0;
 	}
 	void *missed_event =
-	    bpf_map_lookup_elem(&missed_events, tracer_pid_for_parent);
+	    bpf_map_lookup_elem(&missed_events, &clean_tracer_pid);
 	if (missed_event == NULL) {
 		return 0;
 	}
