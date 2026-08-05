@@ -103,6 +103,12 @@ pub struct Cli {
     #[arg(long, default_value = "1.0")]
     pub throughput_interval: f64,
 
+    /// Suppress all events until the traced program opens the exec-marker path
+    /// (/var/fstrace/initialized). Wrappers like `try` open it right before
+    /// exec'ing the real program so their sandbox setup is not traced.
+    #[arg(long)]
+    pub exec_marker: bool,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 

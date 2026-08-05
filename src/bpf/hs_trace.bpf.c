@@ -43,6 +43,36 @@ struct {
 	__type(value, u32); // tracer_pid
 } pid_set SEC(".maps");
 
+// The high bit of a pid_set value marks a tracee as "suppressed": still tracked
+// (so its tracer/ringbuf is known and forks propagate) but NOT emitting events.
+// The exec marker (see below) clears it. This lets a wrapper like `try` build
+// its sandbox suppressed and only record the actual program. The userspace
+// tracer seeds this bit only in marker mode; a standalone run seeds it clear,
+// so everything records from the start exactly as before. Real tracer pids are
+// always < 2^31, so the low 31 bits are the tracer pid unchanged.
+#define FSTRACE_SUPPRESS_BIT 0x80000000u
+
+// Opening this exact path is the "recording start" signal: the wrapper does a
+// harmless openat() of it right before executing the traced program. Detected
+// in hs_trace_sys_enter. MUST be kept in sync with `try`'s -M option.
+#define FSTRACE_EXEC_MARKER "/var/fstrace/initialized"
+
+static __always_inline int
+is_exec_marker(const char *p)
+{
+	const char m[] = FSTRACE_EXEC_MARKER;
+#pragma unroll
+	for (int i = 0; i < (int)sizeof(m); i++) {
+		if (p[i] != m[i]) {
+			return 0;
+		}
+		if (m[i] == '\0') {
+			return 1;
+		}
+	}
+	return 1;
+}
+
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(max_entries, 2);
@@ -95,6 +125,9 @@ BPF_PROG(hs_trace_enter_fcntl)
 
 	u32 *tracer_pid = bpf_map_lookup_elem(&pid_set, &pid);
 	if (tracer_pid == NULL) {
+		return 0;
+	}
+	if (*tracer_pid & FSTRACE_SUPPRESS_BIT) {
 		return 0;
 	}
 	void *ringbuf = bpf_map_lookup_elem(&ringbufs, tracer_pid);
@@ -160,6 +193,9 @@ BPF_PROG(hs_trace_enter_memfd_create)
 
 	u32 *tracer_pid = bpf_map_lookup_elem(&pid_set, &pid);
 	if (tracer_pid == NULL) {
+		return 0;
+	}
+	if (*tracer_pid & FSTRACE_SUPPRESS_BIT) {
 		return 0;
 	}
 	void *ringbuf = bpf_map_lookup_elem(&ringbufs, tracer_pid);
@@ -240,7 +276,8 @@ BPF_PROG(hs_trace_create_pipe)
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u32 pid = pid_tgid & 0xFFFFFFFF;
 
-	if (bpf_map_lookup_elem(&pid_set, &pid) == NULL) {
+	u32 *tracer_pid = bpf_map_lookup_elem(&pid_set, &pid);
+	if (tracer_pid == NULL || (*tracer_pid & FSTRACE_SUPPRESS_BIT)) {
 		return 0;
 	}
 
@@ -273,6 +310,9 @@ BPF_PROG(hs_trace_create_pipe_exit)
 
 	u32 *tracer_pid = bpf_map_lookup_elem(&pid_set, &pid);
 	if (tracer_pid == NULL) {
+		return 0;
+	}
+	if (*tracer_pid & FSTRACE_SUPPRESS_BIT) {
 		return 0;
 	}
 	void *ringbuf = bpf_map_lookup_elem(&ringbufs, tracer_pid);
@@ -524,14 +564,9 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 	if (tracer_pid == NULL) {
 		return 0;
 	}
-	void *ringbuf = bpf_map_lookup_elem(&ringbufs, tracer_pid);
-	if (ringbuf == NULL) {
-		return 0;
-	}
-	void *missed_event = bpf_map_lookup_elem(&missed_events, tracer_pid);
-	if (missed_event == NULL) {
-		return 0;
-	}
+	// ringbuf/missed_event are fetched after the suppress/marker check below:
+	// while suppressed, the value still carries the suppress bit, so it is not
+	// yet a valid ringbufs key.
 
 	int fd = -1;
 	int fd2 = -1;
@@ -828,6 +863,29 @@ BPF_PROG(hs_trace_sys_enter, struct pt_regs *regs, long syscall_id)
 		}
 	}
 	len1 &= (PATH_MAX - 1);
+
+	// Suppress/marker gate. While suppressed, emit nothing; if this is the
+	// exec marker (openat of FSTRACE_EXEC_MARKER) clear the suppress bit so
+	// this pid — and, via sched_process_fork, the program it is about to
+	// exec — starts recording.
+	if (*tracer_pid & FSTRACE_SUPPRESS_BIT) {
+		if (pathptr1 != NULL && is_exec_marker(path1)) {
+			u32 nv = *tracer_pid & ~FSTRACE_SUPPRESS_BIT;
+			bpf_map_update_elem(&pid_set, &pid, &nv, BPF_ANY);
+		}
+		return 0;
+	}
+
+	// Not suppressed: now the value is a valid ringbufs/missed_events key.
+	void *ringbuf = bpf_map_lookup_elem(&ringbufs, tracer_pid);
+	if (ringbuf == NULL) {
+		return 0;
+	}
+	void *missed_event = bpf_map_lookup_elem(&missed_events, tracer_pid);
+	if (missed_event == NULL) {
+		return 0;
+	}
+
 	char *path2;
 	if ((path2 = bpf_map_lookup_elem(&paths, &key1)) == NULL) {
 		// SHOULDN'T HAPPEN
@@ -911,6 +969,9 @@ BPF_PROG(hs_trace_sys_exit)
 
 	u32 *tracer_pid = bpf_map_lookup_elem(&pid_set, &pid);
 	if (tracer_pid == NULL) {
+		return 0;
+	}
+	if (*tracer_pid & FSTRACE_SUPPRESS_BIT) {
 		return 0;
 	}
 	void *ringbuf = bpf_map_lookup_elem(&ringbufs, tracer_pid);

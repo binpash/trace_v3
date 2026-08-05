@@ -236,7 +236,15 @@ fn main() -> Result<()> {
 
     // Initialize the Tracer
     let tracer_pid = unsafe { libc::getpid() };
-    let tracer_pid_buf = &tracer_pid.to_ne_bytes();
+    // The pid_set value is the tracer pid, optionally with the high "suppress"
+    // bit set so this tracee (and its fork descendants) emit nothing until the
+    // exec marker clears it. ringbufs/missed_events stay keyed by the clean
+    // tracer pid (registered in Tracer::new); the value becomes that clean pid
+    // once the marker clears the bit.
+    const FSTRACE_SUPPRESS_BIT: u32 = 0x8000_0000;
+    let pid_set_val =
+        (tracer_pid as u32) | if cli.exec_marker { FSTRACE_SUPPRESS_BIT } else { 0 };
+    let tracer_pid_buf = &pid_set_val.to_ne_bytes();
     let tracer = Tracer::new(tracer_pid, cli.ringbuf_size)
         .context("Failed to initialize tracer. Did you run `fstrace install`?")?;
 
