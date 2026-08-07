@@ -287,9 +287,17 @@ impl Context {
             .get_mut(&pid)
             .expect(format!("expected fd table for pid {pid}").as_str());
         // println!("ctxt.dup_file: {fd_table:#?}");
-        let old_file_desc = fd_table
-            .get(&old_fd)
-            .expect(format!("expected old fd {old_fd} to be present for pid {pid}").as_str());
+        // An fd with no entry was opened before this tracer started recording:
+        // either before the exec marker lifted suppression, or before attaching
+        // to an already-running process. Such an fd cannot be a dependency of
+        // the traced program — the program's own opens are all recorded — so
+        // leave the duplicate untracked rather than killing the tracer, which
+        // would discard the whole run. (Events genuinely lost to a full ring
+        // buffer are a different case, and are already accounted for separately
+        // by the missed-event counter.)
+        let Some(old_file_desc) = fd_table.get(&old_fd) else {
+            return;
+        };
         let open_file = old_file_desc.open_file;
         self.open_files.increment_ref_count(open_file);
         fd_table.insert(
@@ -354,9 +362,10 @@ impl Context {
             .fd_tables
             .get_mut(&pid)
             .expect(format!("expected fd table for pid {pid}").as_str());
-        let file_desc = fd_table
-            .get(&fd)
-            .expect(format!("expected fd {fd} to be present for pid {pid}").as_str());
+        // Unknown fd: predates recording (see dup_file). Report no flags set.
+        let Some(file_desc) = fd_table.get(&fd) else {
+            return 0;
+        };
         file_desc.fd_flags
     }
 
@@ -366,9 +375,10 @@ impl Context {
             .fd_tables
             .get_mut(&pid)
             .expect(format!("expected fd table for pid {pid}").as_str());
-        let file_desc = fd_table
-            .get_mut(&fd)
-            .expect(format!("expected fd {fd} to be present for pid {pid}").as_str());
+        // Unknown fd: predates recording (see dup_file). Nothing to update.
+        let Some(file_desc) = fd_table.get_mut(&fd) else {
+            return;
+        };
         file_desc.fd_flags = fd_flags;
     }
 
@@ -378,9 +388,13 @@ impl Context {
             .fd_tables
             .get(&pid)
             .expect(format!("expected fd table for pid {pid}").as_str());
-        let file_desc = fd_table
-            .get(&fd)
-            .expect(format!("expected fd {fd} for pid {pid}").as_str());
+        // Unknown fd: predates recording (see dup_file), so its path was never
+        // seen. Resolve to the fd's own procfs name — accurate, and anything
+        // built on it stays under /proc, which dependency consumers ignore, so
+        // an unresolvable directory fd cannot invent a bogus dependency.
+        let Some(file_desc) = fd_table.get(&fd) else {
+            return PathBuf::from(format!("/proc/{pid}/fd/{fd}"));
+        };
         let open_file = self
             .open_files
             .get_path(file_desc.open_file)
