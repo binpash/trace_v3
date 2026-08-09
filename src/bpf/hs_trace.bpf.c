@@ -43,6 +43,27 @@ struct {
 	__type(value, u32); // tracer_pid
 } pid_set SEC(".maps");
 
+// Tracers that exited while still holding a ringbufs/missed_events slot.
+//
+// Those are maps of maps, which a BPF program may look up but may not modify —
+// the verifier rejects both update and delete on them — so the kernel cannot
+// free the slot itself. Instead it records the death here, in a map it is
+// allowed to write, and the next tracer to start does the reclaim. The point of
+// detecting it in the kernel is that this is the only place that observes every
+// death: a tracer frees its own slot when it exits gracefully, but nothing in
+// userspace runs after SIGKILL, which is how a tracer dies when a supervisor
+// escalates past its terminate grace period, when a session tears down its
+// process group, or when the OOM killer picks off a speculative execution.
+// Without this, such a slot is leaked permanently (the outer map keeps the
+// inner map alive) and once leaks reach capacity every later tracer fails to
+// start with E2BIG.
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, RINGBUF_MAX_COUNT);
+	__type(key, u32);  // tracer_pid
+	__type(value, u8); // present == exited while registered
+} dead_tracers SEC(".maps");
+
 // The high bit of a pid_set value marks a tracee as "suppressed": still tracked
 // (so its tracer/ringbuf is known and forks propagate) but NOT emitting events.
 // The exec marker (see below) clears it. This lets a wrapper like `try` build
@@ -552,6 +573,19 @@ int
 BPF_PROG(hs_trace_process_exit, struct task_struct *p)
 {
 	u32 pid = p->pid;
+	u32 tgid = p->tgid;
+
+	// Note a tracer that is going away while still registered, so its slot
+	// can be reclaimed (see dead_tracers). Looking up the outer map is
+	// allowed and keeps this precise: this tracepoint fires for every task
+	// on the system, and only the few that actually hold a slot are worth
+	// recording. Restricting it to the thread group leader means a worker
+	// thread exiting cannot mark a tracer that is still running.
+	if (pid == tgid && bpf_map_lookup_elem(&ringbufs, &tgid) != NULL) {
+		u8 exited = 1;
+		bpf_map_update_elem(&dead_tracers, &tgid, &exited, BPF_ANY);
+	}
+
 	if (bpf_map_delete_elem(&pid_set, &pid) < 0) {
 		// bpf_printk("failed to delete %d from pid set\n", pid);
 		return 0;
