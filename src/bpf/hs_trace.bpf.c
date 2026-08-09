@@ -36,9 +36,19 @@ struct {
 	__array(values, struct missed_event);
 } missed_events SEC(".maps");
 
+// Holds an entry for every live traced task, added on fork and removed on exit,
+// so it must be sized for the peak number of processes under trace at once —
+// across all concurrent tracers, not per tracer. That peak is much larger than
+// it looks: a wrapper like `try` forks dozens of helpers building each sandbox,
+// the traced pipeline is several more, and a speculating supervisor runs many
+// of those at the same time. Running out is quiet and expensive rather than
+// loud: a tracer cannot register its tracee (E2BIG), and worse, an already
+// running trace stops propagating on fork, so the traced program keeps running
+// and completes normally while its file accesses go unrecorded — a dependency
+// set that looks empty rather than failed.
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 1024);
+	__uint(max_entries, 65536);
 	__type(key, u32);   // pid
 	__type(value, u32); // tracer_pid
 } pid_set SEC(".maps");

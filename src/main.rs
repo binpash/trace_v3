@@ -253,7 +253,8 @@ fn main() -> Result<()> {
 
     tracer
         .pid_set
-        .update(tracee_pid_buf, tracer_pid_buf, MapFlags::ANY)?;
+        .update(tracee_pid_buf, tracer_pid_buf, MapFlags::ANY)
+        .context("Failed to register the tracee. The pid_set map is shared by every concurrent tracer; E2BIG here means it is full")?;
 
     // create channel and spawn worker thread
     let (sender, receiver) = mpsc::channel::<Option<SyscallEvent>>();
