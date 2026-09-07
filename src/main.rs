@@ -109,6 +109,15 @@ fn fork_child(cli: &Cli) -> Result<i32> {
             setresgid(target_gid, target_gid, target_gid).expect("setresgid");
             setresuid(target_uid, target_uid, target_uid).expect("setresuid");
 
+            // Restore SIGPIPE to its default action. Rust's runtime sets it to
+            // SIG_IGN at startup, and SIG_IGN survives both fork and execve, so
+            // without this every traced descendant inherits it. Programs in a
+            // pipeline then see EPIPE as an ordinary write error and print a
+            // diagnostic ("sort: write failed: Broken pipe") instead of dying
+            // silently, which makes a traced run's stderr differ from an
+            // untraced one's for any pipeline ending in `head` and friends.
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+
             // wait for parent to signal that it's ready
             libc::raise(SIGSTOP);
             libc::execve(prog.as_ptr(), argv.as_ptr(), envp.as_ptr());
